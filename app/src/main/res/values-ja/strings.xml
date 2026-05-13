@@ -672,7 +672,7 @@
     <string name="crash_dialog_heading">問題が発生したため、不正終了しました</string>
     <!-- This string explains why Mozilla would like the user to allow the crash data to be uploaded.
          '%1$s' will be replaced at runtime with the app's domain name. -->
-    <string name="crash_dialog_message"><![CDATA[%1$s の改善を助けるため、Wolvic にクラッシュデータを送信してください。]]></string>
+    <string name="crash_dialog_message"><![CDATA[%1$s の改善にご協力いただくため、Mozilla にクラッシュデータを送信してください。<a href="more">詳細情報</a>]]></string>
     <!-- This string labels a checkbox in the crash dialog box. When checked, the user will no longer
          be prompted for permission to upload crash data after an application crash. -->
     <string name="crash_dialog_send_data">常にデータを送信する</string>
@@ -1229,17 +1229,7 @@
     <!-- This string is used as the body of the Private Browsing page that is opened when the
          Private Browsing Mode button from the tray is clicked.
          '%1$s' will be replaced at runtime with the app's name. -->
-    <string name="private_browsing_body"><![CDATA[
-<p>%1$sプライベートウィンドウでは以下を<strong>保存しません</strong>:</p>
-<ul class="two-column">
-  <li>表示したページ</li>
-  <li>検索履歴</li>
-  <li>Cookie</li>
-  <li>一時ファイル/li>
-</ul>
-<p>プライベートブラウジングで<strong>匿名化はできません</strong>。ネットワーク管理者やインターネットサービスプロバイダーは、依然としてあなたが訪れたページを追跡できます。</p>
-<p class="about-info"><a id="learnMore">プライベートブラウジングの詳細</a>。</p>
-     ]]></string>
+    <string name="private_browsing_body"><![CDATA[\n<p>%1$sプライベートウィンドウでは以下を<strong>保存しません</strong>:</p>\n<ul class="two-column">\n \u0020<li>表示したページ</li>\n \u0020<li>検索履歴</li>\n \u0020<li>Cookie</li>\n \u0020<li>一時ファイル</li>\n</ul>\n<p>プライベートブラウジングで<strong>匿名化はできません</strong>。ネットワーク管理者やインターネットサービスプロバイダーは、依然としてあなたが訪れたページを追跡できます。</p>\n<p class="about-info"><a id="learnMore">プライベートブラウジングの詳細</a>。</p>\n \u0020 \u0020 ]]></string>
     <!-- This string is displayed in any button used for removing all the items in the current context.
          '%1$s' will be replaced at runtime with the app's name. -->
     <string name="homepage_hint">%1$s ホーム (既定)</string>
