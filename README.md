@@ -11,6 +11,7 @@
 
 - The rest of the readme is written by codex so if you are a programmer, you can read it and figure out how to fix it or you can submit some issue about this browser.
 - Thanks for your watching.
+<img width="1850" height="1203" alt="image" src="https://github.com/user-attachments/assets/9b59d1d0-faaa-41c5-926a-661834f97e9c" />
 
 
 
