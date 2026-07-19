@@ -1,16 +1,16 @@
 
 # Read me first
 
--This is a wolvic for vive xr elite.
--I made this by using codex.
--the following content is created by codex.
--Acording to me, this is usable.
--It is better that vive browser s**t.
--It cost me about 100AUD to buy credits and I spent several hours sitting in front of my PC.
--Please help.
+- This is a wolvic for vive xr elite.
+- I made this by using codex.
+- the following content is created by codex.
+- Acording to me, this is usable.
+- It is better that vive browser s**t.
+- It cost me about 100AUD to buy credits and I spent several hours sitting in front of my PC.
+- Please help.
 
--The rest of the readme is written by codex so if you are a programmer, you can read it and figure out how to fix it or you can submit some issue about this browser.
--Thanks for your watching.
+- The rest of the readme is written by codex so if you are a programmer, you can read it and figure out how to fix it or you can submit some issue about this browser.
+- Thanks for your watching.
 
 
 
