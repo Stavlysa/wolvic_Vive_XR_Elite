@@ -6,6 +6,7 @@
 
 - This is a wolvic for vive xr elite.
 - I made this by using codex.
+- - I'm a professional codex user now.
 - the following content is created by codex.
 - Acording to me, this is usable.
 - It is better that vive browser s**t.
