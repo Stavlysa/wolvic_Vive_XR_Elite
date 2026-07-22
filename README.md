@@ -3,6 +3,8 @@
 # 𝕻𝖑𝖊𝖆𝖘𝖊 𝖘𝖙𝖆𝖗
 # P҉̦͉͒͋l̵͓̫̫͋͗̍̽̎e̶̯̟͐̿̌́à̶̯̟̋́s̴̲̩̋̋̉̃̎e̶̟̠̪͚̊̔́͗̐ s̴͖͓̞͍̥̈͂̆t̸͙͚̥̯̪͒̐͒͒ä̶̙̭̦̖͇̓r҉̙̙̒̃͌
 # Read me first
+<img width="1160" height="653" alt="image" src="https://github.com/user-attachments/assets/23224a62-ace2-41f4-a6ef-80189f49900a" />
+
 
 - This is a wolvic for vive xr elite.
 - I made this by using codex.
