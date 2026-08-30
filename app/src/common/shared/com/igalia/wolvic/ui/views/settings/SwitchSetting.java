@@ -14,6 +14,7 @@ import androidx.annotation.NonNull;
 import com.igalia.wolvic.R;
 import com.igalia.wolvic.audio.AudioEngine;
 import com.igalia.wolvic.ui.views.UIButton;
+import com.igalia.wolvic.utils.DeviceType;
 import com.igalia.wolvic.utils.ViewUtils;
 
 public class SwitchSetting extends LinearLayout {
@@ -73,7 +74,17 @@ public class SwitchSetting extends LinearLayout {
             }
 
             setValue(b, true);
-            mSwitch.requestFocus();
+            if (DeviceType.isViveXR()) {
+                // Android's focused Switch drawable leaves a large translucent
+                // thumb halo in VR. Clear the transient pointer state after the
+                // click completes so it cannot look like a stuck animation.
+                mSwitch.post(() -> {
+                    mSwitch.setPressed(false);
+                    mSwitch.clearFocus();
+                });
+            } else {
+                mSwitch.requestFocus();
+            }
         }
     };
 

@@ -50,6 +50,12 @@
                     app:description="@string/developer_options_performance_monitor" />
 
                 <com.igalia.wolvic.ui.views.settings.SwitchSetting
+                    android:id="@+id/background_window_throttling_switch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:description="@string/developer_options_background_window_throttling" />
+
+                <com.igalia.wolvic.ui.views.settings.SwitchSetting
                     android:id="@+id/debug_logging_switch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"

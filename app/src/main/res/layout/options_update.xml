@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/dialog_background"
+        android:paddingStart="30dp"
+        android:paddingEnd="30dp">
+
+        <com.igalia.wolvic.ui.widgets.settings.SettingsHeader
+            android:id="@+id/header_layout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:helpVisibility="gone"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:title="@string/update_options_title" />
+
+        <com.igalia.wolvic.ui.views.CustomScrollView
+            android:id="@+id/scrollbar"
+            style="@style/customScrollViewStyle"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="10dp"
+            android:layout_marginBottom="20dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/header_layout">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <com.igalia.wolvic.ui.views.settings.SwitchSetting
+                    android:id="@+id/automatic_update_switch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:description="@string/update_check_automatically" />
+
+                <com.igalia.wolvic.ui.views.settings.SwitchSetting
+                    android:id="@+id/include_prereleases_switch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:description="@string/update_channel_description"
+                    app:off_text="@string/update_channel_release"
+                    app:on_text="@string/update_channel_release_prerelease" />
+
+                <com.igalia.wolvic.ui.views.settings.ButtonSetting
+                    android:id="@+id/check_now_button"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:buttonText="@string/update_check_now_button"
+                    app:description="@string/update_check_now_description" />
+
+                <com.igalia.wolvic.ui.views.settings.ButtonSetting
+                    android:id="@+id/github_repository_button"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:buttonText="@string/update_open_github"
+                    app:description="@string/update_github_repository_description" />
+
+                <com.igalia.wolvic.ui.views.settings.ButtonSetting
+                    android:id="@+id/available_update_button"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:visibility="gone"
+                    app:buttonText="@string/update_open_github"
+                    app:description="@string/update_available_title"
+                    tools:visibility="visible" />
+
+            </LinearLayout>
+        </com.igalia.wolvic.ui.views.CustomScrollView>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</layout>

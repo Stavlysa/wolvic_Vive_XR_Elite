@@ -29,6 +29,7 @@ public abstract class SettingsView extends FrameLayout {
         POPUP_EXCEPTIONS,
         WEBXR_EXCEPTIONS,
         DEVELOPER,
+        UPDATE,
         FXA,
         ENVIRONMENT,
         CONTROLLER,

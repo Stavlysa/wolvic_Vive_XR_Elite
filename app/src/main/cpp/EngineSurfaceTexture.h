@@ -28,6 +28,8 @@ public:
   void DetachFromGLContext();
   void UpdateTexImage();
   void ReleaseTexImage();
+  bool IsSingleBuffer() const;
+  int64_t GetTimestamp() const;
   void IncrementUse();
   void DecrementUse();
 

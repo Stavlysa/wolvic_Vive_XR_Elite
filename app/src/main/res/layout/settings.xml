@@ -224,6 +224,13 @@
                             app:visibleGone="@{BuildConfig.FLAVOR_backend != &quot;chromium&quot;}"/>
 
                         <com.igalia.wolvic.ui.views.HoneycombButton
+                            android:id="@+id/updateButton"
+                            style="?attr/honeycombButtonStyle"
+                            app:honeycombButtonIcon="@drawable/ic_whats_new"
+                            app:honeycombButtonText="@string/settings_updates"
+                            app:honeycombButtonTextSize="@dimen/settings_main_button_text_width" />
+
+                        <com.igalia.wolvic.ui.views.HoneycombButton
                             android:id="@+id/helpButton"
                             style="?attr/honeycombButtonStyle"
                             app:honeycombButtonIcon="@drawable/ic_settings_help"

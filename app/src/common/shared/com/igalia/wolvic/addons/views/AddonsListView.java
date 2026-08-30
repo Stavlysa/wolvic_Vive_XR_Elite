@@ -75,7 +75,6 @@ public class AddonsListView extends RecyclerView.ViewHolder implements AddonsMan
             v.requestFocusFromTouch();
             return false;
         });
-        mBinding.addonsList.addOnScrollListener(mScrollListener);
         mBinding.addonsList.setHasFixedSize(true);
         mBinding.addonsList.setItemViewCacheSize(20);
         // Drawing Cache is deprecated in API level 28: https://developer.android.com/reference/android/view/View#getDrawingCache().
@@ -111,20 +110,7 @@ public class AddonsListView extends RecyclerView.ViewHolder implements AddonsMan
         });
     }
 
-    protected RecyclerView.OnScrollListener mScrollListener = new RecyclerView.OnScrollListener() {
-        @Override
-        public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
-            super.onScrolled(recyclerView, dx, dy);
-
-            if (recyclerView.getScrollState() != RecyclerView.SCROLL_STATE_SETTLING) {
-                recyclerView.requestFocus();
-            }
-        }
-    };
-
     public void unbind() {
-        mBinding.addonsList.removeOnScrollListener(mScrollListener);
-
         mWidgetManager.getServicesProvider().getAddons().removeListener(this);
     }
 

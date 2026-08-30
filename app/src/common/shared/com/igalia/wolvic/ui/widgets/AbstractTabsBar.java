@@ -113,6 +113,12 @@ public abstract class AbstractTabsBar extends UIWidget implements SessionChangeL
     public void onWidgetUpdate(Widget aWidget) {
         if (aWidget == mAttachedWindow && !mAttachedWindow.isResizing()) {
             updateWidgetPlacement();
+            // Window resizing changes the placement object on the Java side,
+            // but the native VR widget keeps its previous surface and world
+            // size until it receives an explicit update. This is especially
+            // visible with vertical tabs (stale height) and horizontal tabs
+            // on any scale other than 1x (stale width).
+            mWidgetManager.updateWidget(this);
         }
     }
 

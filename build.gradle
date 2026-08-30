@@ -22,6 +22,10 @@ allprojects {
         maven { url 'https://maven.mozilla.org/maven2' }
         maven { url 'https://developer.huawei.com/repo/' }
         maven { url 'https://storage.googleapis.com/r8-releases/raw' }
+        // The Wave SDK is license-gated and intentionally kept outside the
+        // source tree. The user-provided 5.6.0 archive is extracted beside
+        // the Wolvic checkout and exposed as a local Maven repository.
+        maven { url uri("${rootDir}/../vive-wave-sdk-5.6.0/repo") }
     }
 }
 

@@ -142,6 +142,11 @@ vrb::GeometryPtr DeviceUtils::GetSphereGeometry(vrb::CreationContextPtr& context
 }
 
 device::DeviceType DeviceUtils::GetDeviceTypeFromSystem() {
+#if defined(VIVEXR) || defined(WAVEVR)
+    // The dedicated build flavor is more reliable than Android's model string,
+    // which has changed between XR Elite firmware generations.
+    return device::ViveXRElite;
+#else
     char model[128];
     int length = PopulateDeviceModelString(model);
 
@@ -171,6 +176,7 @@ device::DeviceType DeviceUtils::GetDeviceTypeFromSystem() {
         return device::UnknownType;
     }
     return device->second;
+#endif
 }
 
 }

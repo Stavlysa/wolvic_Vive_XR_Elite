@@ -7,6 +7,13 @@ cmake_minimum_required(VERSION 3.4.1)
 project(wolvic)
 set(CMAKE_CXX_STANDARD 17)
 
+# CMake may invoke clang++.exe through an 8.3 alias when the NDK path contains
+# spaces. Clang then cannot infer C++ driver mode from argv[0], so make the
+# Gradle-selected Android STL explicit for every shared native target.
+if(ANDROID)
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -lc++_shared")
+endif()
+
 # Creates and names a library, sets it as either STATIC
 # or SHARED, and provides the relative paths to its source code.
 # You can define multiple libraries, and CMake builds them for you.
@@ -51,7 +58,21 @@ add_library( # Sets the name of the library.
              src/main/cpp/WidgetResizer.cpp
            )
 
-if(NOAPI)
+# Keep include paths in CMake rather than CMAKE_CXX_FLAGS. This preserves paths
+# containing spaces on Windows (for example, a workspace named "vive xr elite").
+target_include_directories(native-lib PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/main/cpp
+    ${CMAKE_SOURCE_DIR}/src/main/cpp/vrb/include
+)
+
+if(WAVEVR)
+target_sources(
+    native-lib
+    PUBLIC
+    ${CMAKE_SOURCE_DIR}/src/wavevr/cpp/native-lib.cpp
+    ${CMAKE_SOURCE_DIR}/src/wavevr/cpp/DeviceDelegateWaveVR.cpp
+    )
+elseif(NOAPI)
 target_sources(
     native-lib
     PUBLIC
@@ -166,6 +187,14 @@ add_library(picoxr-lib SHARED IMPORTED)
 set_target_properties(picoxr-lib PROPERTIES IMPORTED_LOCATION
         ${CMAKE_SOURCE_DIR}/../third_party/picoxr/libs/android.${ANDROID_ABI}/libopenxr_loader.so)
 
+if(WAVEVR)
+    target_include_directories(native-lib PRIVATE ${WAVE_SDK_ROOT}/include)
+    add_library(wavevr-lib SHARED IMPORTED)
+    set_target_properties(wavevr-lib PROPERTIES IMPORTED_LOCATION
+            ${WAVE_SDK_ROOT}/jni/${ANDROID_ABI}/libwvr_api.so)
+    target_link_libraries(native-lib PRIVATE dl)
+endif()
+
 if(SPACES)
     find_package(loader REQUIRED CONFIG)
     target_link_libraries(native-lib PRIVATE loader::openxr_loader)
@@ -181,7 +210,18 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/../app/src/main/cpp/tinygltf)
 
 # Add dependency on KTX-Software
+# KTX's optional Vulkan source generator invokes unix2dos through bash without
+# quoting PROJECT_SOURCE_DIR on Windows. The generated files are already
+# vendored, so skip only that regeneration step when the workspace has spaces.
+set(WOLVIC_SKIP_KTX_VULKAN_REGEN OFF)
+if(CMAKE_HOST_WIN32 AND "${CMAKE_SOURCE_DIR}" MATCHES " ")
+    set(WOLVIC_SKIP_KTX_VULKAN_REGEN ON)
+    set(CMAKE_DISABLE_FIND_PACKAGE_Vulkan TRUE)
+endif()
 add_subdirectory(${CMAKE_SOURCE_DIR}/src/main/cpp/KTX-Software)
+if(WOLVIC_SKIP_KTX_VULKAN_REGEN)
+    unset(CMAKE_DISABLE_FIND_PACKAGE_Vulkan)
+endif()
 target_link_options(ktx PRIVATE "-Wl,-z,max-page-size=16384")
 target_link_options(ktx_read PRIVATE "-Wl,-z,max-page-size=16384")
 target_link_libraries(native-lib PRIVATE ktx_read)

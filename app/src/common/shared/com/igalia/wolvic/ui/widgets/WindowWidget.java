@@ -118,6 +118,8 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
     private final float DEFAULT_SCALE = 1.0f;
     private final float MAX_SCALE = 3.0f;
     private final long FOCUS_ON_HOVER_DELAY_MS = 500;
+    private final long BACKGROUND_RESUME_REVEAL_DELAY_MS = 50;
+    private final long BACKGROUND_RESUME_FALLBACK_MS = 300;
 
     public static final String BROWSER_FALLBACK_URL = "browser_fallback_url";
     public static final String GOOGLE_PLAY_STORE = "play.google.com";
@@ -160,6 +162,8 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
     private boolean mIsResizing;
     private boolean mAfterFirstPaint;
     private boolean mCaptureOnPageStop;
+    private boolean mBackgroundThrottled;
+    private boolean mBackgroundResumePending;
     private PromptDelegate mPromptDelegate;
     private Executor mUIThreadExecutor;
     private WindowViewModel mViewModel;
@@ -170,6 +174,13 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
     private final Runnable focusOnHoverRunnable = () -> {
         if (mHovered) {
            focusWindow();
+        }
+    };
+    private final Runnable revealAfterBackgroundResumeRunnable = () -> {
+        mBackgroundResumePending = false;
+        if (mWidgetManager != null && mWidgetPlacement != null && isVisible()) {
+            mWidgetPlacement.composited = true;
+            mWidgetManager.updateWidget(this);
         }
     };
 
@@ -791,6 +802,10 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
 
     public void setActiveWindow(boolean active) {
         mActive = active;
+        // Gecko distinguishes a visible session from the one session that owns document focus.
+        // Keep that state synchronized with Wolvic's focused window so wheel listeners and
+        // keyboard-driven pages do not keep treating a newly selected side window as unfocused.
+        mSession.setFocused(active);
         if (active) {
             SessionStore.get().setActiveSession(mSession);
             WSession session = mSession.getWSession();
@@ -984,6 +999,13 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
             removeCallbacks(focusOnHoverRunnable);
         }
 
+        if (aEvent.getAction() == MotionEvent.ACTION_SCROLL && !mActive) {
+            // Scrolling a parked side window used to send the wheel event to an inactive Gecko
+            // session. Promote the pointed window first; focusWindow() synchronously reactivates
+            // its session through Windows.updateBackgroundWindowActivity().
+            focusWindow();
+        }
+
         if (!mActive
                 && aEvent.getAction() != MotionEvent.ACTION_SCROLL
                 && aEvent.getAction() != MotionEvent.ACTION_HOVER_MOVE) {
@@ -1126,6 +1148,74 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         mWidgetPlacement.worldWidth = aWorldWidth;
         mWidgetManager.updateWidget(this);
         mWidgetManager.updateVisibleWidgets();
+
+        mViewModel.setWidth(mWidgetPlacement.width);
+        mViewModel.setHeight(mWidgetPlacement.height);
+    }
+
+    /**
+     * Suspend a visible background session without allowing Gecko to replace the window's last
+     * submitted buffer with its inactive clear frame. Detaching the display first lets the native
+     * widget continue presenting that buffer while the session is inactive. Reattaching the same
+     * surface resumes live rendering as soon as the window is focused again.
+     */
+    public void setBackgroundThrottled(boolean aThrottled) {
+        if (mSession == null) {
+            return;
+        }
+
+        if (!isVisible()) {
+            mBackgroundThrottled = false;
+            if (mSession.isActive()) {
+                mSession.setActive(false);
+            }
+            return;
+        }
+
+        if (aThrottled) {
+            if (mBackgroundResumePending) {
+                removeCallbacks(revealAfterBackgroundResumeRunnable);
+                revealAfterBackgroundResumeRunnable.run();
+            }
+            // Native panels already own the widget surface. For normal web content, disconnect
+            // Gecko before setActive(false) so it cannot post a white inactive frame.
+            if (mView == null && mSession.isActive()) {
+                pauseCompositor();
+            }
+            mBackgroundThrottled = true;
+            if (mSession.isActive()) {
+                mSession.setActive(false);
+            }
+            return;
+        }
+
+        boolean reattachSurface = mBackgroundThrottled && mView == null;
+        mBackgroundThrottled = false;
+        if (reattachSurface) {
+            // Hide this content layer while Gecko reconnects. The first buffer submitted after a
+            // compositor restart is an initialization clear frame on GeckoView and can be white.
+            // Keep the toolbar visible, but reveal the page only after the compositor has had time
+            // to replace that buffer with real page content.
+            mBackgroundResumePending = true;
+            mWidgetPlacement.composited = false;
+            mWidgetManager.updateWidget(this);
+            removeCallbacks(revealAfterBackgroundResumeRunnable);
+            postDelayed(revealAfterBackgroundResumeRunnable, BACKGROUND_RESUME_FALLBACK_MS);
+        }
+        if (!mSession.isActive()) {
+            mSession.setActive(true);
+        }
+        if (reattachSurface) {
+            callSurfaceChanged();
+        }
+    }
+
+    public void resizeToDimensions(int aWidth, int aHeight) {
+        mWidgetPlacement.width = aWidth + mBorderWidth * 2;
+        mWidgetPlacement.height = aHeight + mBorderWidth * 2;
+        mWidgetPlacement.worldWidth = WidgetPlacement.floatDimension(getContext(), R.dimen.window_world_width)
+                * (float) aWidth / (float) SettingsStore.WINDOW_WIDTH_DEFAULT;
+        mWidgetManager.updateWidget(this);
 
         mViewModel.setWidth(mWidgetPlacement.width);
         mViewModel.setHeight(mWidgetPlacement.height);
@@ -1895,6 +1985,11 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
 
     @Override
     public void onFirstComposite(@NonNull WSession session) {
+        if (mBackgroundResumePending) {
+            removeCallbacks(revealAfterBackgroundResumeRunnable);
+            postDelayed(revealAfterBackgroundResumeRunnable, BACKGROUND_RESUME_REVEAL_DELAY_MS);
+            return;
+        }
         if (!mAfterFirstPaint) {
             return;
         }
@@ -2062,6 +2157,13 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
     public void onPageStart(@NonNull WSession aSession, @NonNull String aUri) {
         mCaptureOnPageStop = true;
         mViewModel.setIsLoading(true);
+        // Hide Gecko's white intermediate buffer while a normal web page is
+        // waiting for its first contentful paint. The widget's existing clear
+        // color is an opaque neutral gray, so this does not alter the page once
+        // Gecko has produced real content.
+        if (mView == null && isFirstPaintReady()) {
+            waitForFirstPaint();
+        }
     }
 
     @Override

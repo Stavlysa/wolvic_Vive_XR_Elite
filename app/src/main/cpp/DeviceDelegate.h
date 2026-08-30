@@ -94,6 +94,8 @@ public:
     return aPrediction == FramePrediction::NO_FRAME_AHEAD;
   }
   virtual void StartFrame(const FramePrediction aPrediction = FramePrediction::NO_FRAME_AHEAD) = 0;
+  virtual void RecordImmersiveFramePose(uint64_t aInputFrameId) {};
+  virtual void SelectImmersiveFramePose(uint64_t aInputFrameId) {};
   virtual void BindEye(const device::Eye aWhich) = 0;
   virtual bool ShouldRender() const { return mShouldRender; };
   virtual void EndFrame(const FrameEndMode aMode = FrameEndMode::APPLY) = 0;

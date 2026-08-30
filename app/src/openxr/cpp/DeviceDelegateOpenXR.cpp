@@ -23,8 +23,10 @@
 #include "vrb/Vector.h"
 
 #include <vector>
+#include <deque>
 #include <array>
 #include <algorithm>
+#include <cmath>
 #include <assert.h>
 #include <cstdlib>
 #include <unistd.h>
@@ -47,11 +49,56 @@
 
 namespace crow {
 
+#if defined(VIVEXR)
+// XR_HTC_frame_synchronization was added after the OpenXR 1.0.34 headers
+// used by the Android loader in this project. Keep the small vendor ABI local
+// until the extension is published in the Khronos headers.
+static constexpr const char* kViveFrameSynchronizationExtensionName =
+    "XR_HTC_frame_synchronization";
+static constexpr XrStructureType kViveFrameSynchronizationSessionBeginInfoType =
+    static_cast<XrStructureType>(1000329000);
+
+enum XrFrameSynchronizationModeHTC : uint32_t {
+  XR_FRAME_SYNCHRONIZATION_MODE_STABILIZED_HTC = 1,
+  XR_FRAME_SYNCHRONIZATION_MODE_PROMPT_HTC = 2,
+};
+
+struct XrFrameSynchronizationSessionBeginInfoHTC {
+  XrStructureType type;
+  const void* next;
+  XrFrameSynchronizationModeHTC mode;
+};
+
+static double
+QuaternionAngularDistanceDegrees(const XrQuaternionf& a, const XrQuaternionf& b) {
+  double dot = static_cast<double>(a.x) * b.x +
+               static_cast<double>(a.y) * b.y +
+               static_cast<double>(a.z) * b.z +
+               static_cast<double>(a.w) * b.w;
+  dot = std::min(1.0, std::max(-1.0, std::fabs(dot)));
+  return 2.0 * std::acos(dot) * 57.29577951308232;
+}
+
+static double
+PosePositionDistanceMillimeters(const XrPosef& a, const XrPosef& b) {
+  const double x = static_cast<double>(a.position.x) - b.position.x;
+  const double y = static_cast<double>(a.position.y) - b.position.y;
+  const double z = static_cast<double>(a.position.z) - b.position.z;
+  return std::sqrt(x * x + y * y + z * z) * 1000.0;
+}
+#endif
+
 struct HandMeshPropertiesMSFT {
     uint32_t indexCount = 0;
     uint32_t vertexCount = 0;
 };
 typedef std::unique_ptr<HandMeshPropertiesMSFT> HandMeshPropertiesMSFTPtr;
+
+struct ImmersiveFramePoseOpenXR {
+  uint64_t inputFrameId = 0;
+  XrTime predictedDisplayTime = 0;
+  std::vector<XrView> views;
+};
 
 struct DeviceDelegateOpenXR::State {
   vrb::RenderContextWeak context;
@@ -87,6 +134,44 @@ struct DeviceDelegateOpenXR::State {
   FramePrediction framePrediction = FramePrediction::NO_FRAME_AHEAD;
   XrTime prevPredictedDisplayTime = 0;
   XrTime predictedDisplayTime = 0;
+  XrTime runtimePredictedDisplayTime = 0;
+  XrDuration predictedDisplayPeriod = 0;
+  uint32_t frameTimingDiagnosticCount = 0;
+  XrDuration frameTimingDeltaSum = 0;
+  XrDuration frameTimingDeltaMin = 0;
+  XrDuration frameTimingDeltaMax = 0;
+  uint32_t missedFrameTimingCount = 0;
+  std::deque<ImmersiveFramePoseOpenXR> immersiveFramePoseHistory;
+  std::vector<XrView> selectedImmersiveFrameViews;
+  uint64_t selectedImmersiveFrameId = 0;
+  std::vector<XrView> runtimeTargetViews;
+  bool runtimeTargetViewsValid = false;
+  XrTime selectedImmersiveFramePoseTime = 0;
+  uint64_t latestImmersiveInputFrameId = 0;
+  uint32_t poseMatchDiagnosticCount = 0;
+  uint64_t poseMatchLagSum = 0;
+  uint64_t poseMatchLagMax = 0;
+  uint32_t poseMatchMissCount = 0;
+  XrDuration poseMatchAgeSum = 0;
+  XrDuration poseMatchAgeMax = 0;
+  uint32_t latePoseSampleCount = 0;
+  uint32_t latePoseInvalidCount = 0;
+  double latePoseRotationSum = 0.0;
+  double latePoseRotationMax = 0.0;
+  double latePosePositionSum = 0.0;
+  double latePosePositionMax = 0.0;
+  XrTime lastSubmittedDisplayTime = 0;
+  uint32_t submittedTimeDiagnosticCount = 0;
+  uint32_t submittedTimeNonMonotonicCount = 0;
+  uint32_t submittedTimeIrregularCount = 0;
+  XrDuration submittedTimeStepSum = 0;
+  XrDuration submittedTimeStepMin = 0;
+  XrDuration submittedTimeStepMax = 0;
+  bool hasLastStageTransformPose = false;
+  XrPosef lastStageTransformPose = {};
+  uint32_t stageTransformDiagnosticCount = 0;
+  double stageTransformDriftSum = 0.0;
+  double stageTransformDriftMax = 0.0;
   XrPosef predictedPose = {};
   XrPosef prevPredictedPose = {};
   uint32_t discardedFrameIndex = 0;
@@ -111,6 +196,7 @@ struct DeviceDelegateOpenXR::State {
   bool mHandTrackingSupported = false;
   std::vector<float> refreshRates;
   bool reorientRequested { false };
+  XrTime reorientChangeTime { 0 };
   OpenXRLayerPassthroughPtr passthroughLayer { nullptr };
   PassthroughStrategyPtr passthroughStrategy;
   XrEnvironmentBlendMode defaultBlendMode { XR_ENVIRONMENT_BLEND_MODE_MAX_ENUM };
@@ -185,6 +271,11 @@ struct DeviceDelegateOpenXR::State {
     if (OpenXRExtensions::IsExtensionSupported(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME)) {
         extensions.push_back(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
     }
+#if defined(VIVEXR)
+    if (OpenXRExtensions::IsExtensionSupported(kViveFrameSynchronizationExtensionName)) {
+      extensions.push_back(kViveFrameSynchronizationExtensionName);
+    }
+#endif
 #if defined(OCULUSVR) || defined(PFDMXR)
     if (OpenXRExtensions::IsExtensionSupported(XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME)) {
       extensions.push_back(XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME);
@@ -228,6 +319,11 @@ struct DeviceDelegateOpenXR::State {
 
     if (OpenXRExtensions::IsExtensionSupported(XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME))
         extensions.push_back(XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME);
+
+    // Required by the XR Elite runtime when the application requests OpenXR
+    // 1.0. The interaction profile is promoted to core in OpenXR 1.1.
+    if (OpenXRExtensions::IsExtensionSupported(XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME))
+        extensions.push_back(XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME);
 
     java = {XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR};
     java.applicationVM = javaContext->vm;
@@ -310,6 +406,17 @@ struct DeviceDelegateOpenXR::State {
     VRB_LOG("OpenXR system name: %s", systemProperties.systemName);
 
     layersEnabled = systemProperties.graphicsProperties.maxLayerCount > 1 && OpenXRExtensions::IsExtensionSupported(XR_KHR_ANDROID_SURFACE_SWAPCHAIN_EXTENSION_NAME);
+#if defined(VIVEXR)
+    // The VIVE XR Elite Wave runtime reports maxLayerCount=16 through OpenXR,
+    // while its mobile compositor accepts only one projection layer plus three
+    // overlays. Wolvic normally submits more UI layers than that and the
+    // Android-surface swapchains are then reused/corrupted by the runtime.
+    // Render widgets and the skybox through Wolvic's established projection
+    // fallback instead. This also avoids submitting a cube layer that the
+    // runtime does not advertise.
+    layersEnabled = false;
+    VRB_LOG("VIVE XR Elite: composition layers disabled; using projection fallback");
+#endif
     if (systemProperties.graphicsProperties.maxLayerCount == 0)
         VRB_ERROR("OpenXR runtime reports 0 layers. There must be at least 1");
 
@@ -410,6 +517,9 @@ struct DeviceDelegateOpenXR::State {
     }
     // Cache view buffer (used in xrLocateViews)
     views.resize(viewCount, {XR_TYPE_VIEW});
+#if defined(VIVEXR)
+    runtimeTargetViews.resize(viewCount, {XR_TYPE_VIEW});
+#endif
 
     vrb::RenderContextPtr render = context.lock();
 
@@ -462,7 +572,21 @@ struct DeviceDelegateOpenXR::State {
     CHECK(viewConfig.size() > 0);
 
     immersiveDisplay->SetDeviceName(systemProperties.systemName);
+#if defined(VIVEXR)
+    // Gecko rendering at the full 1600x1600 recommendation per eye misses the
+    // 90 Hz GPU budget on XR Elite. Render at 80% in each dimension, then let
+    // the OpenXR compositor upscale into the native eye swapchains.
+    constexpr uint32_t kViveWebXRResolutionNumerator = 4;
+    constexpr uint32_t kViveWebXRResolutionDenominator = 5;
+    const uint32_t eyeWidth = viewConfig.front().recommendedImageRectWidth *
+                              kViveWebXRResolutionNumerator / kViveWebXRResolutionDenominator;
+    const uint32_t eyeHeight = viewConfig.front().recommendedImageRectHeight *
+                               kViveWebXRResolutionNumerator / kViveWebXRResolutionDenominator;
+    immersiveDisplay->SetEyeResolution(eyeWidth, eyeHeight);
+    VRB_LOG("VIVE XR Elite: WebXR eye resolution %ux%u (80%% linear scale)", eyeWidth, eyeHeight);
+#else
     immersiveDisplay->SetEyeResolution(viewConfig.front().recommendedImageRectWidth, viewConfig.front().recommendedImageRectHeight);
+#endif
     immersiveDisplay->SetSittingToStandingTransform(vrb::Matrix::Translation(kAverageHeight));
     auto toDeviceBlendModes = [](std::vector<XrEnvironmentBlendMode> aOpenXRBlendModes) {
         std::vector<device::BlendMode> deviceBlendModes;
@@ -667,6 +791,17 @@ struct DeviceDelegateOpenXR::State {
   void BeginXRSession() {
       XrSessionBeginInfo sessionBeginInfo{XR_TYPE_SESSION_BEGIN_INFO};
       sessionBeginInfo.primaryViewConfigurationType = viewConfigType;
+#if defined(VIVEXR)
+      XrFrameSynchronizationSessionBeginInfoHTC frameSynchronizationInfo {
+          kViveFrameSynchronizationSessionBeginInfoType,
+          nullptr,
+          XR_FRAME_SYNCHRONIZATION_MODE_PROMPT_HTC
+      };
+      if (OpenXRExtensions::IsExtensionSupported(kViveFrameSynchronizationExtensionName)) {
+        sessionBeginInfo.next = &frameSynchronizationInfo;
+        VRB_LOG("VIVE XR Elite: prompt frame synchronization enabled");
+      }
+#endif
       CHECK_XRCMD(xrBeginSession(session, &sessionBeginInfo));
       vrReady = true;
   }
@@ -727,6 +862,13 @@ struct DeviceDelegateOpenXR::State {
       if (!OpenXRExtensions::IsExtensionSupported(XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME))
           return;
 
+#if defined(VIVEXR)
+      VRB_LOG("VIVE XR Elite: CPU/GPU performance set to sustained high");
+      CHECK_XRCMD(OpenXRExtensions::sXrPerfSettingsSetPerformanceLevelEXT(session, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT));
+      CHECK_XRCMD(OpenXRExtensions::sXrPerfSettingsSetPerformanceLevelEXT(session, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT));
+      return;
+#endif
+
       if (renderMode == device::RenderMode::StandAlone && minCPULevel == device::CPULevel::Normal) {
           CHECK_XRCMD(OpenXRExtensions::sXrPerfSettingsSetPerformanceLevelEXT(session, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_LOW_EXT));
           CHECK_XRCMD(OpenXRExtensions::sXrPerfSettingsSetPerformanceLevelEXT(session, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_LOW_EXT));
@@ -753,6 +895,15 @@ struct DeviceDelegateOpenXR::State {
       case device::PfdmYVR2:
       case device::PfdmMR:
         suggestedRefreshRate = 90.0;
+        break;
+      case device::ViveXRElite:
+        // Keep the OpenXR compositor at the XR Elite's 90 Hz rate in both
+        // modes. Immersive WebXR content may render more slowly, but Wolvic
+        // now resubmits the last completed image every display interval so
+        // head-pose reprojection remains smooth independently of page FPS.
+        suggestedRefreshRate = 90.0;
+        VRB_LOG("VIVE XR Elite: selecting %.0f Hz for %s mode", suggestedRefreshRate,
+                renderMode == device::RenderMode::Immersive ? "immersive" : "standalone");
         break;
       case device::OculusQuest:
         suggestedRefreshRate = 72.0;
@@ -885,6 +1036,37 @@ DeviceDelegateOpenXR::SetRenderMode(const device::RenderMode aMode) {
     return;
   }
   m.renderMode = aMode;
+#if defined(VIVEXR)
+  m.immersiveFramePoseHistory.clear();
+  m.selectedImmersiveFrameViews.clear();
+  m.selectedImmersiveFrameId = 0;
+  m.selectedImmersiveFramePoseTime = 0;
+  m.latestImmersiveInputFrameId = 0;
+  m.poseMatchDiagnosticCount = 0;
+  m.poseMatchLagSum = 0;
+  m.poseMatchLagMax = 0;
+  m.poseMatchMissCount = 0;
+  m.poseMatchAgeSum = 0;
+  m.poseMatchAgeMax = 0;
+  m.runtimeTargetViewsValid = false;
+  m.latePoseSampleCount = 0;
+  m.latePoseInvalidCount = 0;
+  m.latePoseRotationSum = 0.0;
+  m.latePoseRotationMax = 0.0;
+  m.latePosePositionSum = 0.0;
+  m.latePosePositionMax = 0.0;
+  m.lastSubmittedDisplayTime = 0;
+  m.submittedTimeDiagnosticCount = 0;
+  m.submittedTimeNonMonotonicCount = 0;
+  m.submittedTimeIrregularCount = 0;
+  m.submittedTimeStepSum = 0;
+  m.submittedTimeStepMin = 0;
+  m.submittedTimeStepMax = 0;
+  m.hasLastStageTransformPose = false;
+  m.stageTransformDiagnosticCount = 0;
+  m.stageTransformDriftSum = 0.0;
+  m.stageTransformDriftMax = 0.0;
+#endif
   vrb::RenderContextPtr render = m.context.lock();
   for (OpenXRSwapChainPtr& eyeSwapchain: m.eyeSwapChains) {
     XrSwapchainCreateInfo info = m.GetSwapChainCreateInfo();
@@ -1035,11 +1217,17 @@ DeviceDelegateOpenXR::ProcessEvents() {
         m.UpdateInteractionProfile();
         break;
       }
-      case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
+      case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
+        const auto& event =
+            *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(ev);
         m.firstPose = std::nullopt;
         m.reorientRequested = true;
-        VRB_DEBUG("OpenXR: reference space changed. User recentered the view?");
+        m.reorientChangeTime = event.changeTime;
+        VRB_LOG("OpenXR: reference space %d change pending at %lld; user recentered the view?",
+                event.referenceSpaceType,
+                static_cast<long long>(event.changeTime));
         break;
+      }
       case XR_TYPE_EVENT_DATA_PASSTHROUGH_STATE_CHANGED_FB: {
         auto result = m.passthroughStrategy->handleEvent(*ev);
         if (result == OpenXRPassthroughStrategy::HandleEventResult::NonRecoverableError) {
@@ -1092,6 +1280,8 @@ DeviceDelegateOpenXR::StartFrame(const FramePrediction aPrediction) {
   XrFrameWaitInfo frameWaitInfo{XR_TYPE_FRAME_WAIT_INFO};
   XrFrameState frameState{XR_TYPE_FRAME_STATE};
   CHECK_XRCMD(xrWaitFrame(m.session, &frameWaitInfo, &frameState));
+  m.runtimePredictedDisplayTime = frameState.predictedDisplayTime;
+  m.predictedDisplayPeriod = frameState.predictedDisplayPeriod;
 
   // Begin frame and select the predicted display time
   XrFrameBeginInfo frameBeginInfo{XR_TYPE_FRAME_BEGIN_INFO};
@@ -1103,6 +1293,33 @@ DeviceDelegateOpenXR::StartFrame(const FramePrediction aPrediction) {
     m.prevPredictedPose = m.predictedPose;
     m.prevViews = m.views;
     m.predictedDisplayTime = frameState.predictedDisplayTime + frameState.predictedDisplayPeriod;
+#if defined(VIVEXR)
+    if (m.prevPredictedDisplayTime != 0) {
+      const XrDuration delta = m.prevPredictedDisplayTime - frameState.predictedDisplayTime;
+      if (m.frameTimingDiagnosticCount == 0) {
+        m.frameTimingDeltaMin = delta;
+        m.frameTimingDeltaMax = delta;
+      } else {
+        m.frameTimingDeltaMin = std::min(m.frameTimingDeltaMin, delta);
+        m.frameTimingDeltaMax = std::max(m.frameTimingDeltaMax, delta);
+      }
+      m.frameTimingDeltaSum += delta;
+      if (std::llabs(delta) > frameState.predictedDisplayPeriod / 2) {
+        ++m.missedFrameTimingCount;
+      }
+      if (++m.frameTimingDiagnosticCount == 90) {
+        const double periodMs = static_cast<double>(frameState.predictedDisplayPeriod) / 1000000.0;
+        VRB_LOG("VIVE XR frame timing: avg=%+.3fms min=%+.3fms max=%+.3fms missed=%u/90 period=%.3fms",
+                static_cast<double>(m.frameTimingDeltaSum) / 90000000.0,
+                static_cast<double>(m.frameTimingDeltaMin) / 1000000.0,
+                static_cast<double>(m.frameTimingDeltaMax) / 1000000.0,
+                m.missedFrameTimingCount, periodMs);
+        m.frameTimingDiagnosticCount = 0;
+        m.frameTimingDeltaSum = 0;
+        m.missedFrameTimingCount = 0;
+      }
+    }
+#endif
   } else {
     m.predictedDisplayTime = frameState.predictedDisplayTime;
   }
@@ -1110,6 +1327,34 @@ DeviceDelegateOpenXR::StartFrame(const FramePrediction aPrediction) {
   mShouldRender = frameState.shouldRender;
   if (!frameState.shouldRender)
     return;
+
+#if defined(VIVEXR)
+  // Re-locate the views for the runtime's actual target time. Comparing this
+  // late sample with the views predicted one frame earlier tells us how much
+  // correction VIVE's asynchronous timewarp needs to apply during head turns.
+  m.runtimeTargetViewsValid = false;
+  if (m.renderMode == device::RenderMode::Immersive &&
+      aPrediction == FramePrediction::ONE_FRAME_AHEAD &&
+      !m.runtimeTargetViews.empty()) {
+    XrViewLocateInfo runtimeTargetLocateInfo{XR_TYPE_VIEW_LOCATE_INFO};
+    runtimeTargetLocateInfo.viewConfigurationType = m.viewConfigType;
+    runtimeTargetLocateInfo.displayTime = m.runtimePredictedDisplayTime;
+    runtimeTargetLocateInfo.space = m.localSpace;
+    XrViewState runtimeTargetViewState{XR_TYPE_VIEW_STATE};
+    uint32_t runtimeTargetViewCount = 0;
+    const XrResult locateResult = xrLocateViews(
+        m.session, &runtimeTargetLocateInfo, &runtimeTargetViewState,
+        static_cast<uint32_t>(m.runtimeTargetViews.size()),
+        &runtimeTargetViewCount, m.runtimeTargetViews.data());
+    if (XR_SUCCEEDED(locateResult) &&
+        runtimeTargetViewCount == static_cast<uint32_t>(m.runtimeTargetViews.size()) &&
+        (runtimeTargetViewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT)) {
+      m.runtimeTargetViewsValid = true;
+    } else if (XR_FAILED(locateResult)) {
+      MessageXrResult(locateResult);
+    }
+  }
+#endif
 
   // Query head location
   XrSpaceLocation location {XR_TYPE_SPACE_LOCATION};
@@ -1119,7 +1364,8 @@ DeviceDelegateOpenXR::StartFrame(const FramePrediction aPrediction) {
     m.firstPose = location.pose;
   }
 
-  vrb::Matrix head = XrPoseToMatrix(location.pose);
+  const vrb::Matrix trackingHead = XrPoseToMatrix(location.pose);
+  vrb::Matrix head = trackingHead;
 #if HVR
   if (IsPositionTrackingSupported()) {
     // Convert from floor to local (HVR doesn't support stageSpace yet)
@@ -1151,6 +1397,52 @@ DeviceDelegateOpenXR::StartFrame(const FramePrediction aPrediction) {
       xrLocateSpace(m.localSpace, m.stageSpace, m.predictedDisplayTime, &stageLocation);
       vrb::Matrix transform = XrPoseToMatrix(stageLocation.pose);
       m.immersiveDisplay->SetSittingToStandingTransform(transform);
+#if defined(VIVEXR)
+      if (stageLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) {
+        const double rotationDelta = m.hasLastStageTransformPose
+            ? QuaternionAngularDistanceDegrees(
+                  m.lastStageTransformPose.orientation, stageLocation.pose.orientation)
+            : 0.0;
+        const double positionDelta = m.hasLastStageTransformPose
+            ? PosePositionDistanceMillimeters(m.lastStageTransformPose, stageLocation.pose)
+            : 0.0;
+
+        // VIVE's system recenter changes LOCAL relative to STAGE, but its
+        // OpenXR runtime does not always emit
+        // XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING. Detect the
+        // otherwise-fixed reference-space transform jumping so the standalone
+        // browser is realigned with the user's new forward direction.
+        if (m.renderMode == device::RenderMode::StandAlone &&
+            m.hasLastStageTransformPose &&
+            (rotationDelta > 0.5 || positionDelta > 10.0)) {
+          m.firstPose = std::nullopt;
+          m.reorientRequested = true;
+          // The observed transform jump means the runtime has already applied
+          // the change, so this fallback can be handled on the current frame.
+          m.reorientChangeTime = 0;
+          VRB_LOG("VIVE XR recenter fallback: local-to-stage changed by %.3fdeg, %.1fmm",
+                  rotationDelta, positionDelta);
+        }
+
+        m.lastStageTransformPose = stageLocation.pose;
+        m.hasLastStageTransformPose = true;
+
+        if (m.renderMode == device::RenderMode::Immersive) {
+          m.stageTransformDriftSum += rotationDelta;
+          m.stageTransformDriftMax = std::max(m.stageTransformDriftMax, rotationDelta);
+          if (++m.stageTransformDiagnosticCount == 90) {
+            const XrQuaternionf& q = stageLocation.pose.orientation;
+            VRB_LOG("VIVE XR floor space: avgDrift=%.5fdeg maxDrift=%.5fdeg poseY=%.4fm q=(%.5f,%.5f,%.5f,%.5f) flags=0x%llx",
+                    m.stageTransformDriftSum / 90.0, m.stageTransformDriftMax,
+                    stageLocation.pose.position.y, q.x, q.y, q.z, q.w,
+                    static_cast<unsigned long long>(stageLocation.locationFlags));
+            m.stageTransformDiagnosticCount = 0;
+            m.stageTransformDriftSum = 0.0;
+            m.stageTransformDriftMax = 0.0;
+          }
+        }
+      }
+#endif
 #if HVR
       // Workaround for empty stage transform bug in HVR
       if (IsPositionTrackingSupported()) {
@@ -1179,12 +1471,29 @@ DeviceDelegateOpenXR::StartFrame(const FramePrediction aPrediction) {
     XrViewLocateInfo viewLocateInfo{XR_TYPE_VIEW_LOCATE_INFO};
     viewLocateInfo.viewConfigurationType = m.viewConfigType;
     viewLocateInfo.displayTime = m.predictedDisplayTime;
+#if defined(VIVEXR)
+    // Keep the XR Elite standalone shell on its proven local-space path. For
+    // immersive WebXR, request the eye poses relative to VIEW directly so
+    // Gecko does not inherit the small prediction mismatch between a separate
+    // xrLocateSpace(head) call and xrLocateViews(local).
+    viewLocateInfo.space = m.renderMode == device::RenderMode::Immersive
+                               ? m.viewSpace
+                               : m.localSpace;
+#else
     viewLocateInfo.space = m.viewSpace;
+#endif
     CHECK_XRCMD(xrLocateViews(m.session, &viewLocateInfo, &viewState, viewCapacityInput, &viewCountOutput, m.views.data()));
     for (int i = 0; i < m.views.size(); ++i) {
       const XrView &view = m.views[i];
       const device::Eye eye = i == 0 ? device::Eye::Left : device::Eye::Right;
+#if defined(VIVEXR)
+      const vrb::Matrix eyeTransform =
+          m.renderMode == device::RenderMode::Immersive
+              ? XrPoseToMatrix(view.pose)
+              : trackingHead.AfineInverse().PostMultiply(XrPoseToMatrix(view.pose));
+#else
       vrb::Matrix eyeTransform = XrPoseToMatrix(view.pose);
+#endif
       m.cameras[i]->SetEyeTransform(eyeTransform);
       if (m.immersiveDisplay) {
         m.immersiveDisplay->SetEyeTransform(eye, eyeTransform);
@@ -1193,11 +1502,21 @@ DeviceDelegateOpenXR::StartFrame(const FramePrediction aPrediction) {
   }
 
   // Perspective
+#if defined(VIVEXR)
+  if (m.renderMode == device::RenderMode::Immersive) {
+    XrViewLocateInfo viewLocateInfo{XR_TYPE_VIEW_LOCATE_INFO};
+    viewLocateInfo.viewConfigurationType = m.viewConfigType;
+    viewLocateInfo.displayTime = m.predictedDisplayTime;
+    viewLocateInfo.space = m.localSpace;
+    CHECK_XRCMD(xrLocateViews(m.session, &viewLocateInfo, &viewState, viewCapacityInput, &viewCountOutput, m.views.data()));
+  }
+#else
   XrViewLocateInfo viewLocateInfo{XR_TYPE_VIEW_LOCATE_INFO};
   viewLocateInfo.viewConfigurationType = m.viewConfigType;
   viewLocateInfo.displayTime = m.predictedDisplayTime;
   viewLocateInfo.space = m.localSpace;
   CHECK_XRCMD(xrLocateViews(m.session, &viewLocateInfo, &viewState, viewCapacityInput, &viewCountOutput, m.views.data()));
+#endif
 
   for (int i = 0; i < m.views.size(); ++i) {
     const XrView& view = m.views[i];
@@ -1224,12 +1543,141 @@ DeviceDelegateOpenXR::StartFrame(const FramePrediction aPrediction) {
     m.input->Update(frameState, m.localSpace, head, offsets, m.renderMode, m.pointerMode, m.handTrackingEnabled, *m.controller);
   }
 
-  if (m.reorientRequested && m.renderMode == device::RenderMode::StandAlone) {
+  if (m.reorientRequested &&
+      m.renderMode == device::RenderMode::StandAlone &&
+      (m.reorientChangeTime == 0 || m.predictedDisplayTime >= m.reorientChangeTime)) {
       if (mReorientClient)
           mReorientClient->OnReorient();
       m.reorientMatrix = DeviceUtils::CalculateReorientationMatrix(head, kAverageHeight);
       m.reorientRequested = false;
+      m.reorientChangeTime = 0;
   }
+}
+
+void
+DeviceDelegateOpenXR::RecordImmersiveFramePose(uint64_t aInputFrameId) {
+#if defined(VIVEXR)
+  if (aInputFrameId == 0 || m.views.empty()) {
+    return;
+  }
+
+  ImmersiveFramePoseOpenXR framePose;
+  framePose.inputFrameId = aInputFrameId;
+  framePose.predictedDisplayTime = m.predictedDisplayTime;
+  framePose.views = m.views;
+  m.immersiveFramePoseHistory.push_back(std::move(framePose));
+  m.latestImmersiveInputFrameId = aInputFrameId;
+  // At 90 Hz this retains a little over one second of render-pose history.
+  // Repeated OpenXR submissions must keep matching the source pose even when
+  // Gecko stalls long enough for the previous 32-frame window to be evicted.
+  while (m.immersiveFramePoseHistory.size() > 128) {
+    m.immersiveFramePoseHistory.pop_front();
+  }
+#else
+  (void)aInputFrameId;
+#endif
+}
+
+void
+DeviceDelegateOpenXR::SelectImmersiveFramePose(uint64_t aInputFrameId) {
+#if defined(VIVEXR)
+  // A Gecko timeout repeats the same released swapchain image. Keep its last
+  // successfully matched source pose without searching or letting a long
+  // stall evict it from the history; pairing an old image with the current
+  // head pose would disable the runtime's corrective reprojection.
+  if (aInputFrameId != 0 &&
+      aInputFrameId == m.selectedImmersiveFrameId &&
+      !m.selectedImmersiveFrameViews.empty()) {
+    return;
+  }
+
+  m.selectedImmersiveFrameViews.clear();
+  m.selectedImmersiveFrameId = 0;
+  m.selectedImmersiveFramePoseTime = 0;
+  if (aInputFrameId == 0) {
+    return;
+  }
+
+  bool found = false;
+  for (auto iter = m.immersiveFramePoseHistory.rbegin();
+       iter != m.immersiveFramePoseHistory.rend(); ++iter) {
+    if (iter->inputFrameId == aInputFrameId) {
+      m.selectedImmersiveFrameViews = iter->views;
+      m.selectedImmersiveFrameId = aInputFrameId;
+      m.selectedImmersiveFramePoseTime = iter->predictedDisplayTime;
+      found = true;
+      break;
+    }
+  }
+
+  const uint64_t lag = m.latestImmersiveInputFrameId >= aInputFrameId
+                           ? m.latestImmersiveInputFrameId - aInputFrameId
+                           : 0;
+  m.poseMatchLagSum += lag;
+  m.poseMatchLagMax = std::max(m.poseMatchLagMax, lag);
+  if (found) {
+    const XrDuration poseAge =
+        std::max<XrDuration>(0, m.runtimePredictedDisplayTime - m.selectedImmersiveFramePoseTime);
+    m.poseMatchAgeSum += poseAge;
+    m.poseMatchAgeMax = std::max(m.poseMatchAgeMax, poseAge);
+    if (m.runtimeTargetViewsValid &&
+        m.runtimeTargetViews.size() == m.selectedImmersiveFrameViews.size()) {
+      for (size_t i = 0; i < m.runtimeTargetViews.size(); ++i) {
+        const double rotation = QuaternionAngularDistanceDegrees(
+            m.selectedImmersiveFrameViews[i].pose.orientation,
+            m.runtimeTargetViews[i].pose.orientation);
+        const double position = PosePositionDistanceMillimeters(
+            m.selectedImmersiveFrameViews[i].pose,
+            m.runtimeTargetViews[i].pose);
+        m.latePoseRotationSum += rotation;
+        m.latePoseRotationMax = std::max(m.latePoseRotationMax, rotation);
+        m.latePosePositionSum += position;
+        m.latePosePositionMax = std::max(m.latePosePositionMax, position);
+        ++m.latePoseSampleCount;
+      }
+    } else {
+      ++m.latePoseInvalidCount;
+    }
+  } else {
+    ++m.poseMatchMissCount;
+    ++m.latePoseInvalidCount;
+  }
+
+  if (++m.poseMatchDiagnosticCount == 90) {
+    VRB_LOG("VIVE XR pose matching: avgLag=%.2f maxLag=%llu unmatched=%u/90 avgAge=%.2fms maxAge=%.2fms latest=%llu rendered=%llu",
+            static_cast<double>(m.poseMatchLagSum) / 90.0,
+            static_cast<unsigned long long>(m.poseMatchLagMax), m.poseMatchMissCount,
+            static_cast<double>(m.poseMatchAgeSum) / 90000000.0,
+            static_cast<double>(m.poseMatchAgeMax) / 1000000.0,
+            static_cast<unsigned long long>(m.latestImmersiveInputFrameId),
+            static_cast<unsigned long long>(aInputFrameId));
+    if (m.latePoseSampleCount > 0) {
+      VRB_LOG("VIVE XR late pose delta: avgRot=%.4fdeg maxRot=%.4fdeg avgPos=%.3fmm maxPos=%.3fmm samples=%u invalidFrames=%u/90",
+              m.latePoseRotationSum / m.latePoseSampleCount,
+              m.latePoseRotationMax,
+              m.latePosePositionSum / m.latePoseSampleCount,
+              m.latePosePositionMax,
+              m.latePoseSampleCount, m.latePoseInvalidCount);
+    } else {
+      VRB_LOG("VIVE XR late pose delta: no valid samples invalidFrames=%u/90",
+              m.latePoseInvalidCount);
+    }
+    m.poseMatchDiagnosticCount = 0;
+    m.poseMatchLagSum = 0;
+    m.poseMatchLagMax = 0;
+    m.poseMatchMissCount = 0;
+    m.poseMatchAgeSum = 0;
+    m.poseMatchAgeMax = 0;
+    m.latePoseSampleCount = 0;
+    m.latePoseInvalidCount = 0;
+    m.latePoseRotationSum = 0.0;
+    m.latePoseRotationMax = 0.0;
+    m.latePosePositionSum = 0.0;
+    m.latePosePositionMax = 0.0;
+  }
+#else
+  (void)aInputFrameId;
+#endif
 }
 
 void
@@ -1282,9 +1730,54 @@ DeviceDelegateOpenXR::EndFrame(const FrameEndMode aEndMode) {
   }
 
   const bool frameAhead = m.framePrediction == FramePrediction::ONE_FRAME_AHEAD;
-  const XrPosef& predictedPose = frameAhead ? m.prevPredictedPose : m.predictedPose;
-  const XrTime displayTime = frameAhead ? m.prevPredictedDisplayTime : m.predictedDisplayTime;
-  auto& targetViews = frameAhead ? m.prevViews : m.views;
+  XrTime displayTime = frameAhead ? m.prevPredictedDisplayTime : m.predictedDisplayTime;
+  const std::vector<XrView>* targetViews = frameAhead ? &m.prevViews : &m.views;
+#if defined(VIVEXR)
+  if (m.renderMode == device::RenderMode::Immersive &&
+      !m.selectedImmersiveFrameViews.empty()) {
+    targetViews = &m.selectedImmersiveFrameViews;
+    displayTime = m.runtimePredictedDisplayTime;
+  }
+  // When Wolvic misses a runtime interval, the one-frame-ahead timestamp is
+  // already a full display period in the past. Submit the rendered pose for
+  // the runtime's current target time so asynchronous reprojection can cover
+  // the missed frame instead of presenting against a stale target timestamp.
+  if (frameAhead && displayTime + m.predictedDisplayPeriod / 2 < m.runtimePredictedDisplayTime) {
+    displayTime = m.runtimePredictedDisplayTime;
+  }
+  if (m.renderMode == device::RenderMode::Immersive) {
+    if (m.lastSubmittedDisplayTime != 0) {
+      const XrDuration step = displayTime - m.lastSubmittedDisplayTime;
+      if (m.submittedTimeDiagnosticCount == 0) {
+        m.submittedTimeStepMin = step;
+        m.submittedTimeStepMax = step;
+      } else {
+        m.submittedTimeStepMin = std::min(m.submittedTimeStepMin, step);
+        m.submittedTimeStepMax = std::max(m.submittedTimeStepMax, step);
+      }
+      m.submittedTimeStepSum += step;
+      if (step <= 0) {
+        ++m.submittedTimeNonMonotonicCount;
+      }
+      if (std::llabs(step - m.predictedDisplayPeriod) > m.predictedDisplayPeriod / 2) {
+        ++m.submittedTimeIrregularCount;
+      }
+      if (++m.submittedTimeDiagnosticCount == 90) {
+        VRB_LOG("VIVE XR submitted time: avgStep=%.3fms minStep=%.3fms maxStep=%.3fms nonMonotonic=%u/90 irregular=%u/90 period=%.3fms",
+                static_cast<double>(m.submittedTimeStepSum) / 90000000.0,
+                static_cast<double>(m.submittedTimeStepMin) / 1000000.0,
+                static_cast<double>(m.submittedTimeStepMax) / 1000000.0,
+                m.submittedTimeNonMonotonicCount, m.submittedTimeIrregularCount,
+                static_cast<double>(m.predictedDisplayPeriod) / 1000000.0);
+        m.submittedTimeDiagnosticCount = 0;
+        m.submittedTimeNonMonotonicCount = 0;
+        m.submittedTimeIrregularCount = 0;
+        m.submittedTimeStepSum = 0;
+      }
+    }
+    m.lastSubmittedDisplayTime = displayTime;
+  }
+#endif
 
   std::vector<const XrCompositionLayerBaseHeader*>& layers = m.frameEndLayers;
   layers.clear();
@@ -1371,13 +1864,13 @@ DeviceDelegateOpenXR::EndFrame(const FrameEndMode aEndMode) {
   // Add main eye buffer layer
   XrCompositionLayerProjection projectionLayer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
   std::vector<XrCompositionLayerProjectionView> projectionLayerViews;
-  projectionLayerViews.resize(targetViews.size());
+  projectionLayerViews.resize(targetViews->size());
   projectionLayer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-  for (int i = 0; i < targetViews.size(); ++i) {
+  for (int i = 0; i < targetViews->size(); ++i) {
     const OpenXRSwapChainPtr& viewSwapChain =  m.eyeSwapChains[i];
     projectionLayerViews[i] = {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW};
-    projectionLayerViews[i].pose = targetViews[i].pose;
-    projectionLayerViews[i].fov = targetViews[i].fov;
+    projectionLayerViews[i].pose = (*targetViews)[i].pose;
+    projectionLayerViews[i].fov = (*targetViews)[i].fov;
     projectionLayerViews[i].subImage.swapchain = viewSwapChain->SwapChain();
     projectionLayerViews[i].subImage.imageRect.offset = {0, 0};
     projectionLayerViews[i].subImage.imageRect.extent = {viewSwapChain->Width(), viewSwapChain->Height()};

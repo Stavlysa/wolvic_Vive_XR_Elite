@@ -23,6 +23,10 @@ jmethodID sIsAttachedToGLContext;
 jmethodID sDetachFromGLContext;
 jmethodID sUpdateTexImage;
 jmethodID sReleaseTexImage;
+#ifdef GECKO
+jmethodID sIsSingleBuffer;
+jmethodID sGetTimestamp;
+#endif
 jmethodID sIncrementUse;
 jmethodID sDecrementUse;
 
@@ -47,6 +51,12 @@ const char* kUpdateTexImageName = "updateTexImage";
 const char* kUpdateTexImageSignature= "()V";
 const char* kReleaseTexImageName = "releaseTexImage";
 const char* kReleaseTexImageSignature = "()V";
+#ifdef GECKO
+const char* kIsSingleBufferName = "isSingleBuffer";
+const char* kIsSingleBufferSignature = "()Z";
+const char* kGetTimestampName = "getTimestamp";
+const char* kGetTimestampSignature = "()J";
+#endif
 const char* kIncrementUseName = "incrementUse";
 const char* kIncrementUseSignature = "()V";
 const char* kDecrementUseName = "decrementUse";
@@ -98,6 +108,10 @@ EngineSurfaceTexture::InitializeJava(JNIEnv* aEnv, jobject aActivity) {
   sDetachFromGLContext = FindJNIMethodID(sEnv, sEngineSurfaceTextureClass, kDetachFromGLContextName, kDetachFromGLContextSignature);
   sUpdateTexImage = FindJNIMethodID(sEnv, sEngineSurfaceTextureClass, kUpdateTexImageName, kUpdateTexImageSignature);
   sReleaseTexImage = FindJNIMethodID(sEnv, sEngineSurfaceTextureClass, kReleaseTexImageName, kReleaseTexImageSignature);
+#ifdef GECKO
+  sIsSingleBuffer = FindJNIMethodID(sEnv, sEngineSurfaceTextureClass, kIsSingleBufferName, kIsSingleBufferSignature);
+  sGetTimestamp = FindJNIMethodID(sEnv, sEngineSurfaceTextureClass, kGetTimestampName, kGetTimestampSignature);
+#endif
   sIncrementUse = FindJNIMethodID(sEnv, sEngineSurfaceTextureClass, kIncrementUseName, kIncrementUseSignature);
   sDecrementUse = FindJNIMethodID(sEnv, sEngineSurfaceTextureClass, kDecrementUseName, kDecrementUseSignature);
 }
@@ -121,6 +135,10 @@ EngineSurfaceTexture::ShutdownJava() {
     sAttachToGLContext = nullptr;
     sReleaseTexImage = nullptr;
     sUpdateTexImage = nullptr;
+#ifdef GECKO
+    sIsSingleBuffer = nullptr;
+    sGetTimestamp = nullptr;
+#endif
     sIncrementUse = nullptr;
     sDecrementUse = nullptr;
     sEnv = nullptr;
@@ -197,6 +215,30 @@ EngineSurfaceTexture::ReleaseTexImage() {
   if (!ValidateMethodID(sEnv, m.surface, sReleaseTexImage, __FUNCTION__)) { return; }
   sEnv->CallVoidMethod(m.surface, sReleaseTexImage);
   CheckJNIException(sEnv, __FUNCTION__);
+}
+
+bool
+EngineSurfaceTexture::IsSingleBuffer() const {
+#ifdef GECKO
+  if (!ValidateMethodID(sEnv, m.surface, sIsSingleBuffer, __FUNCTION__)) { return false; }
+  const bool result = sEnv->CallBooleanMethod(m.surface, sIsSingleBuffer);
+  CheckJNIException(sEnv, __FUNCTION__);
+  return result;
+#else
+  return false;
+#endif
+}
+
+int64_t
+EngineSurfaceTexture::GetTimestamp() const {
+#ifdef GECKO
+  if (!ValidateMethodID(sEnv, m.surface, sGetTimestamp, __FUNCTION__)) { return 0; }
+  const int64_t result = sEnv->CallLongMethod(m.surface, sGetTimestamp);
+  CheckJNIException(sEnv, __FUNCTION__);
+  return result;
+#else
+  return 0;
+#endif
 }
 
 void

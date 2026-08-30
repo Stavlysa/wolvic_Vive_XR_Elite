@@ -864,6 +864,12 @@ public class Session implements WContentBlocking.Delegate, WSession.NavigationDe
         }
     }
 
+    public void setFocused(boolean aFocused) {
+        if (mState.mSession != null) {
+            mState.mSession.setFocused(aFocused);
+        }
+    }
+
     public void reload() {
         reload(WSession.LOAD_FLAGS_NONE);
     }

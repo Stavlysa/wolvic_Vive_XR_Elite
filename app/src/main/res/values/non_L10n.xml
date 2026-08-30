@@ -7,6 +7,16 @@
     <string name="settings_key_telemetry" translatable="false">settings_telemetry</string>
     <string name="settings_key_geolocation_data" translatable="false">geolocation_data</string>
     <string name="settings_key_remote_debugging" translatable="false">settings_remote_debugging</string>
+    <string name="settings_key_wave_release_remote_debugging_migrated" translatable="false">settings_wave_release_remote_debugging_migrated</string>
+    <string name="settings_key_background_window_throttling" translatable="false">settings_background_window_throttling</string>
+    <string name="settings_key_update_check_enabled" translatable="false">settings_update_check_enabled</string>
+    <string name="settings_key_update_include_prereleases" translatable="false">settings_update_include_prereleases</string>
+    <string name="settings_key_update_last_check_time" translatable="false">settings_update_last_check_time</string>
+    <string name="settings_key_update_cached_version_code" translatable="false">settings_update_cached_version_code</string>
+    <string name="settings_key_update_cached_title" translatable="false">settings_update_cached_title</string>
+    <string name="settings_key_update_cached_url" translatable="false">settings_update_cached_url</string>
+    <string name="settings_key_update_cached_prerelease" translatable="false">settings_update_cached_prerelease</string>
+    <string name="settings_key_update_last_notified_version_code" translatable="false">settings_update_last_notified_version_code</string>
     <string name="settings_key_console_logs" translatable="false">settings_console_logs</string>
     <string name="settings_key_system_root_ca" translatable="false">settings_system_root_ca</string>
     <string name="settings_key_start_with_passthrough" translatable="false">settings_start_with_passthrough</string>

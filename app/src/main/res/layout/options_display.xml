@@ -107,9 +107,10 @@
 
                 <com.igalia.wolvic.ui.views.settings.RadioGroupSetting
                     android:id="@+id/windows_size"
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    app:description="@string/settings_window_size" />
+                    app:description="@string/settings_window_size"
+                    app:layout="@layout/setting_radio_group_grid" />
 
                 <com.igalia.wolvic.ui.views.settings.SingleEditSetting
                     android:id="@+id/density_edit"

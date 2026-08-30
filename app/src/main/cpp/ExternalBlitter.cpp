@@ -16,9 +16,9 @@
 
 namespace {
 const char* sVertexShader = R"SHADER(
-attribute vec4 a_position;
-attribute vec2 a_uv;
-varying vec2 v_uv;
+attribute highp vec4 a_position;
+attribute highp vec2 a_uv;
+varying highp vec2 v_uv;
 void main(void) {
   v_uv = a_uv;
   gl_Position = a_position;
@@ -33,11 +33,11 @@ void main(void) {
  */
 const char* sFragmentShader = R"SHADER(
 #extension GL_OES_EGL_image_external : require
-precision mediump float;
+precision highp float;
 
 uniform samplerExternalOES u_texture0;
 
-varying vec2 v_uv;
+varying highp vec2 v_uv;
 
 vec3 toLinear(vec3 srgb) {
     return pow(srgb, vec3(2.2));
@@ -52,11 +52,11 @@ void main() {
 #else
 const char* sFragmentShader = R"SHADER(
 #extension GL_OES_EGL_image_external : require
-precision mediump float;
+precision highp float;
 
 uniform samplerExternalOES u_texture0;
 
-varying vec2 v_uv;
+varying highp vec2 v_uv;
 
 void main() {
   gl_FragColor = texture2D(u_texture0, v_uv);
@@ -108,8 +108,9 @@ void
 ExternalBlitter::StartFrame(const int32_t aSurfaceHandle, const device::EyeRect& aLeftEye,
                             const device::EyeRect& aRightEye) {
   std::map<const int32_t, EngineSurfaceTexturePtr>::iterator iter = m.surfaceMap.find(aSurfaceHandle);
+  const bool createdSurface = iter == m.surfaceMap.end();
 
-  if (iter == m.surfaceMap.end()) {
+  if (createdSurface) {
     VRB_LOG("Creating EngineSurfaceTexture for handle: %d", aSurfaceHandle);
     m.surface = EngineSurfaceTexture::Create(aSurfaceHandle);
     m.surfaceMap[aSurfaceHandle] = m.surface;
@@ -120,6 +121,11 @@ ExternalBlitter::StartFrame(const int32_t aSurfaceHandle, const device::EyeRect&
   if (!m.surface) {
     VRB_ERROR("Failed to find EngineSurfaceTexture for handle: %d", aSurfaceHandle);
     return;
+  }
+
+  if (createdSurface) {
+    VRB_LOG("VIVE XR WebXR texture: handle=%d singleBuffer=%s", aSurfaceHandle,
+            m.surface->IsSingleBuffer() ? "true" : "false");
   }
 
 
@@ -139,9 +145,15 @@ ExternalBlitter::Draw(const device::Eye aEye) {
     VRB_ERROR("ExternalBlitter::Draw FAILED!");
     return;
   }
-  const GLboolean enabled = glIsEnabled(GL_DEPTH_TEST);
-  if (enabled) {
+  const GLboolean depthEnabled = glIsEnabled(GL_DEPTH_TEST);
+  const GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+  if (depthEnabled) {
     VRB_GL_CHECK(glDisable(GL_DEPTH_TEST));
+  }
+  if (blendEnabled) {
+    // The immersive WebXR SurfaceTexture is already composited and opaque.
+    // Blending it a second time can attenuate antialiased distant details.
+    VRB_GL_CHECK(glDisable(GL_BLEND));
   }
   VRB_GL_CHECK(glUseProgram(m.program));
   VRB_GL_CHECK(glActiveTexture(GL_TEXTURE0));
@@ -154,7 +166,10 @@ ExternalBlitter::Draw(const device::Eye aEye) {
   VRB_GL_CHECK(glVertexAttribPointer((GLuint)m.aUV, 2, GL_FLOAT, GL_FALSE, 0, data));
   VRB_GL_CHECK(glEnableVertexAttribArray((GLuint)m.aUV));
   VRB_GL_CHECK(glDrawArrays(GL_TRIANGLE_STRIP, 0, 4));
-  if (enabled) {
+  if (blendEnabled) {
+    VRB_GL_CHECK(glEnable(GL_BLEND));
+  }
+  if (depthEnabled) {
     VRB_GL_CHECK(glEnable(GL_DEPTH_TEST));
   }
 }

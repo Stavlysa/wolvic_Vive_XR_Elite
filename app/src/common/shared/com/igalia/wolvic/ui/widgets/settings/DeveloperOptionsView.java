@@ -62,6 +62,10 @@ class DeveloperOptionsView extends SettingsView {
         // Hide Performance Monitor switch until it can handle multiple windows.
         mBinding.performanceMonitorSwitch.setVisibility(View.GONE);
 
+        mBinding.backgroundWindowThrottlingSwitch.setOnCheckedChangeListener(mBackgroundWindowThrottlingListener);
+        setBackgroundWindowThrottling(SettingsStore.getInstance(getContext()).isBackgroundWindowThrottlingEnabled(), false);
+        mBinding.backgroundWindowThrottlingSwitch.setVisibility(DeviceType.isWaveVR() ? View.VISIBLE : View.GONE);
+
         mBinding.hardwareAccelerationSwitch.setOnCheckedChangeListener(mUIHardwareAccelerationListener);
         setUIHardwareAcceleration(SettingsStore.getInstance(getContext()).isUIHardwareAccelerationEnabled(), false);
 
@@ -85,6 +89,10 @@ class DeveloperOptionsView extends SettingsView {
 
     private SwitchSetting.OnCheckedChangeListener mPerformanceListener = (compoundButton, value, doApply) -> {
         setPerformance(value, doApply);
+    };
+
+    private SwitchSetting.OnCheckedChangeListener mBackgroundWindowThrottlingListener = (compoundButton, value, doApply) -> {
+        setBackgroundWindowThrottling(value, doApply);
     };
 
     private SwitchSetting.OnCheckedChangeListener mDebugLogginListener = (compoundButton, value, doApply) -> {
@@ -116,6 +124,10 @@ class DeveloperOptionsView extends SettingsView {
 
         if (mBinding.performanceMonitorSwitch.isChecked() != SettingsStore.PERFORMANCE_MONITOR_DEFAULT) {
             setPerformance(SettingsStore.PERFORMANCE_MONITOR_DEFAULT, true);
+        }
+
+        if (mBinding.backgroundWindowThrottlingSwitch.isChecked() != SettingsStore.BACKGROUND_WINDOW_THROTTLING_DEFAULT) {
+            setBackgroundWindowThrottling(SettingsStore.BACKGROUND_WINDOW_THROTTLING_DEFAULT, true);
         }
 
         boolean prevDebugLoggingSelection = mBinding.debugLoggingSwitch.isChecked();
@@ -186,6 +198,16 @@ class DeveloperOptionsView extends SettingsView {
 
         if (doApply) {
             SettingsStore.getInstance(getContext()).setPerformanceMonitorEnabled(value);
+        }
+    }
+
+    private void setBackgroundWindowThrottling(boolean value, boolean doApply) {
+        mBinding.backgroundWindowThrottlingSwitch.setOnCheckedChangeListener(null);
+        mBinding.backgroundWindowThrottlingSwitch.setValue(value, false);
+        mBinding.backgroundWindowThrottlingSwitch.setOnCheckedChangeListener(mBackgroundWindowThrottlingListener);
+
+        if (doApply) {
+            SettingsStore.getInstance(getContext()).setBackgroundWindowThrottlingEnabled(value);
         }
     }
 

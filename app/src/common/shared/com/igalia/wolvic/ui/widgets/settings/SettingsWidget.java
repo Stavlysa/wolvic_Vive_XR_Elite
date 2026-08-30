@@ -250,6 +250,15 @@ public class SettingsWidget extends UIDialog implements SettingsView.Delegate {
             onDeveloperOptionsClick();
         });
 
+        mBinding.updateButton.setOnClickListener(view -> {
+            if (mAudio != null) {
+                mAudio.playSound(AudioEngine.Sound.CLICK);
+            }
+
+            showView(SettingsView.SettingViewType.UPDATE);
+        });
+        mBinding.updateButton.setVisibility(DeviceType.isViveXR() ? View.VISIBLE : View.GONE);
+
         mBinding.controllerOptionsButton.setOnClickListener(view -> {
             if (mAudio != null) {
                 mAudio.playSound(AudioEngine.Sound.CLICK);
@@ -478,6 +487,9 @@ public class SettingsWidget extends UIDialog implements SettingsView.Delegate {
                 break;
             case DEVELOPER:
                 showView(new DeveloperOptionsView(getContext(), mWidgetManager));
+                break;
+            case UPDATE:
+                showView(new UpdateOptionsView(getContext(), mWidgetManager));
                 break;
             case FXA:
                 showView(new FxAAccountOptionsView(getContext(), mWidgetManager));

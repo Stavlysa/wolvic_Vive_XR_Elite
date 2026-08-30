@@ -128,6 +128,23 @@
     <!-- This string is used to label a button in the 'Settings' dialog window that, when pressed,
          opens a dialog box that contains settings that an application or Web developer might want to change. -->
     <string name="settings_developer_options">开发者选项</string>
+    <string name="settings_updates">更新</string>
+    <string name="update_options_title">更新</string>
+    <string name="update_check_automatically">自动检查更新</string>
+    <string name="update_channel_description">更新通道</string>
+    <string name="update_channel_release">Release</string>
+    <string name="update_channel_release_prerelease">Release + Prerelease</string>
+    <string name="update_check_now_description">立即检查 VIVE XR Elite 的 GitHub Releases</string>
+    <string name="update_check_now_button">立即检查</string>
+    <string name="update_github_repository_description">Wolvic for VIVE XR Elite 的源码与 Releases</string>
+    <string name="update_checking">正在检查 GitHub 更新…</string>
+    <string name="update_up_to_date">目前已是最新版。已安装 versionCode：%1$d</string>
+    <string name="update_check_error">无法检查更新，请确认网络连接后再试一次。</string>
+    <string name="update_available_description">%1$s · versionCode %2$d · %3$s</string>
+    <string name="update_open_github">打开 GitHub</string>
+    <string name="update_available_title">发现 Wolvic 新版本</string>
+    <string name="update_available_body">%1$s\n新版 versionCode：%2$d\n已安装 versionCode：%3$d</string>
+    <string name="update_later">稍后</string>
     <!-- This string is used in the 'Settings' window when user is not signed into a Mozilla Account -->
     <string name="settings_fxa_account_sign_in">登录账户</string>
     <!-- This string is used in the 'Settings' window when user is signed into a Mozilla Account -->
@@ -343,6 +360,8 @@
     <!-- This string labels an On/Off switch in the 'Developer Options' dialog
          and is used to toggle remote debugging of website content in the application. -->
     <string name="developer_options_remote_debugging">启用远程调试</string>
+
+    <string name="developer_options_background_window_throttling">降低后台窗口刷新率</string>
     <!-- This string labels an On/Off switch in the 'Display Options' dialog
          and is used to customize if we use passthrough mode when the app starts. -->
     <string name="display_options_start_with_passthrough">启动时使用直通模式</string>

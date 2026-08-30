@@ -19,6 +19,10 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.PorterDuff;
 import android.graphics.SurfaceTexture;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.net.Uri;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES20;
@@ -94,6 +98,7 @@ import com.igalia.wolvic.ui.widgets.dialogs.SendTabDialogWidget;
 import com.igalia.wolvic.ui.widgets.dialogs.WhatsNewWidget;
 import com.igalia.wolvic.ui.widgets.menus.VideoProjectionMenuWidget;
 import com.igalia.wolvic.utils.BitmapCache;
+import com.igalia.wolvic.utils.AppUpdateManager;
 import com.igalia.wolvic.utils.ConnectivityReceiver;
 import com.igalia.wolvic.utils.DeviceType;
 import com.igalia.wolvic.utils.LocaleUtils;
@@ -134,6 +139,12 @@ public class VRBrowserActivity extends PlatformActivity implements WidgetManager
     public static final String EXTRA_HIDE_WHATS_NEW = "hide_whats_new";
     public static final String EXTRA_KIOSK = "kiosk";
     private static final long BATTERY_UPDATE_INTERVAL = 60 * 1_000_000_000L; // 60 seconds
+    private static final long VIVE_PROXIMITY_EXIT_DELAY_MS = 500;
+    private static final String VIVE_MENU_KEY_ACTION = "com.htc.intent.action.OEM_HANDLE_MENUKEY";
+    // XR Elite reports the menu-key broadcast before its Wave runtime finishes
+    // applying the new arena yaw. The observed gap is about 0.87 seconds.
+    private static final long VIVE_SYSTEM_RECENTER_DELAY_MS = 1_100;
+    private static final long AUTOMATIC_UPDATE_CHECK_DELAY_MS = 30_000;
 
     private boolean mLaunchImmersive = false;
     public static final String EXTRA_LAUNCH_IMMERSIVE = "launch_immersive";
@@ -216,6 +227,7 @@ public class VRBrowserActivity extends PlatformActivity implements WidgetManager
     int mLastGesture;
     SwipeRunnable mLastRunnable;
     Handler mHandler = new Handler(Looper.getMainLooper());
+    private final Runnable mAutomaticUpdateCheckRunnable = this::checkForAutomaticUpdate;
     Runnable mAudioUpdateRunnable;
     Windows mWindows;
     RootWidget mRootWidget;
@@ -241,6 +253,11 @@ public class VRBrowserActivity extends PlatformActivity implements WidgetManager
     private SettingsStore mSettings;
     private SharedPreferences mPrefs;
     private boolean mConnectionAvailable = true;
+    private SensorManager mViveProximitySensorManager;
+    private Sensor mViveProximitySensor;
+    private SensorEventListener mViveProximityListener;
+    private Handler mViveProximityHandler;
+    private BroadcastReceiver mViveMenuKeyReceiver;
     private Widget mActiveDialog;
     private Set<String> mPoorPerformanceAllowList;
     private float mCurrentCylinderDensity = 0;
@@ -377,6 +394,8 @@ public class VRBrowserActivity extends PlatformActivity implements WidgetManager
         else
             setPointerMode(mSettings.getPointerMode());
 
+        registerViveMenuKeyReceiver();
+
         // Show the launch dialogs, if needed.
         if (!showTermsServiceDialogIfNeeded()) {
             if (!showPrivacyDialogIfNeeded()) {
@@ -384,7 +403,50 @@ public class VRBrowserActivity extends PlatformActivity implements WidgetManager
             }
         }
 
+        // Give the initial browser/session UI time to settle so an update prompt never
+        // competes with first-run, privacy, or What's New dialogs.
+        mHandler.postDelayed(mAutomaticUpdateCheckRunnable, AUTOMATIC_UPDATE_CHECK_DELAY_MS);
+
         getLifecycleRegistry().setCurrentState(Lifecycle.State.CREATED);
+    }
+
+    private void checkForAutomaticUpdate() {
+        if (!DeviceType.isViveXR() || isFinishing() || isDestroyed()) {
+            return;
+        }
+        AppUpdateManager.checkForUpdates(this, false, result -> {
+            AppUpdateManager.UpdateInfo info = result.getUpdateInfo();
+            if (result.getStatus() != AppUpdateManager.Status.UPDATE_AVAILABLE || info == null
+                    || isFinishing() || isDestroyed() || mWindows == null
+                    || mWindows.getFocusedWindow() == null
+                    || !mSettings.isUpdateCheckEnabled()
+                    || Boolean.TRUE.equals(mIsPresentingImmersive.getValue())
+                    || !AppUpdateManager.shouldNotify(this, info)) {
+                return;
+            }
+            showUpdateAvailableDialog(info);
+        });
+    }
+
+    private void showUpdateAvailableDialog(@NonNull AppUpdateManager.UpdateInfo info) {
+        AppUpdateManager.markNotified(this, info);
+        PromptDialogWidget dialog = new PromptDialogWidget(this);
+        dialog.setTitle(R.string.update_available_title);
+        dialog.setBody(getString(
+                R.string.update_available_body,
+                info.getTitle(), info.getVersionCode(), BuildConfig.VERSION_CODE));
+        dialog.setDescriptionVisible(false);
+        dialog.setCheckboxVisible(false);
+        dialog.setIcon(R.drawable.ic_whats_new);
+        dialog.setButtons(new int[] {R.string.update_later, R.string.update_open_github});
+        dialog.setButtonsDelegate((index, isChecked) -> {
+            dialog.hide(UIWidget.REMOVE_WIDGET);
+            dialog.releaseWidget();
+            if (index == PromptDialogWidget.POSITIVE) {
+                openNewTabForeground(info.getHtmlUrl());
+            }
+        });
+        dialog.show(UIWidget.REQUEST_FOCUS);
     }
 
     // Called from onCreate when getApplication() is not a VRBrowserApplication. That happens when Android
@@ -645,6 +707,7 @@ public class VRBrowserActivity extends PlatformActivity implements WidgetManager
 
     @Override
     protected void onPause() {
+        unregisterViveProximityListener();
         if (mIsPresentingImmersive.getValue()) {
             // This needs to be sync to ensure that WebVR is correctly paused.
             // Also prevents a deadlock in onDestroy when the BrowserWidget is released.
@@ -694,10 +757,144 @@ public class VRBrowserActivity extends PlatformActivity implements WidgetManager
         super.onResume();
         ((VRBrowserApplication)getApplication()).setCurrentActivity(this);
         getLifecycleRegistry().setCurrentState(Lifecycle.State.RESUMED);
+        registerViveProximityListener();
+    }
+
+    private void registerViveProximityListener() {
+        if (!DeviceType.isViveXR() || mViveProximityListener != null) {
+            return;
+        }
+
+        mViveProximitySensorManager = (SensorManager)getSystemService(Context.SENSOR_SERVICE);
+        if (mViveProximitySensorManager == null) {
+            Log.w(LOGTAG, "VIVE XR proximity sensor manager is unavailable");
+            return;
+        }
+
+        mViveProximitySensor = mViveProximitySensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY, true);
+        if (mViveProximitySensor == null) {
+            mViveProximitySensor = mViveProximitySensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY);
+        }
+        if (mViveProximitySensor == null) {
+            Log.w(LOGTAG, "VIVE XR proximity sensor is unavailable");
+            return;
+        }
+
+        mViveProximityHandler = new Handler(Looper.getMainLooper());
+        mViveProximityListener = new SensorEventListener() {
+            @Override
+            public void onSensorChanged(SensorEvent event) {
+                if (event.values.length == 0) {
+                    return;
+                }
+
+                // XR Elite's ultrasonic sensor reports 0 while worn and 1 while removed.
+                final boolean isFar = event.values[0] > 0.0f;
+                Log.i(LOGTAG, "VIVE XR proximity: " + (isFar ? "far" : "near") +
+                        " value=" + event.values[0] +
+                        " max=" + mViveProximitySensor.getMaximumRange());
+                mViveProximityHandler.removeCallbacks(mViveProximityExitRunnable);
+                if (isFar) {
+                    mViveProximityHandler.postDelayed(
+                            mViveProximityExitRunnable, VIVE_PROXIMITY_EXIT_DELAY_MS);
+                }
+            }
+
+            @Override
+            public void onAccuracyChanged(Sensor sensor, int accuracy) {
+            }
+        };
+
+        if (!mViveProximitySensorManager.registerListener(
+                mViveProximityListener, mViveProximitySensor, SensorManager.SENSOR_DELAY_NORMAL)) {
+            Log.w(LOGTAG, "Failed to register VIVE XR proximity listener");
+            mViveProximityListener = null;
+            mViveProximitySensor = null;
+            mViveProximityHandler = null;
+        } else {
+            Log.i(LOGTAG, "VIVE XR proximity sleep guard enabled");
+        }
+    }
+
+    private final Runnable mViveProximityExitRunnable = () -> {
+        if (!Boolean.TRUE.equals(mIsPresentingImmersive.getValue())) {
+            return;
+        }
+
+        Log.i(LOGTAG, "VIVE XR proximity far: exiting immersive before panel sleep");
+        queueRunnable(this::exitImmersiveNative);
+    };
+
+    private void unregisterViveProximityListener() {
+        if (mViveProximityHandler != null) {
+            mViveProximityHandler.removeCallbacks(mViveProximityExitRunnable);
+        }
+        if (mViveProximitySensorManager != null && mViveProximityListener != null) {
+            mViveProximitySensorManager.unregisterListener(mViveProximityListener);
+        }
+        mViveProximityListener = null;
+        mViveProximitySensor = null;
+        mViveProximitySensorManager = null;
+        mViveProximityHandler = null;
+    }
+
+    private final Runnable mViveSystemRecenterRunnable = () -> {
+        if (isFinishing() || mSettings == null || mWindows == null) {
+            return;
+        }
+
+        Log.i(LOGTAG, "VIVE XR system recenter completed; realigning Wolvic UI");
+        if (!mSettings.isHeadLockEnabled()) {
+            mWindows.resetWindowsPosition();
+        }
+        recenterUIYaw(WidgetManagerDelegate.YAW_TARGET_ALL);
+    };
+
+    private void registerViveMenuKeyReceiver() {
+        // Wave's VRActivity consumes this system-key broadcast and reports the
+        // completed recenter through WVR_EventType_RecenterSuccess instead.
+        if (!DeviceType.isViveXR() || DeviceType.isWaveVR() || mViveMenuKeyReceiver != null) {
+            return;
+        }
+
+        mViveMenuKeyReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (!VIVE_MENU_KEY_ACTION.equals(intent.getAction())) {
+                    return;
+                }
+
+                // The firmware sends this broadcast twice for one press. Replacing
+                // the pending callback both debounces it and waits until the Wave
+                // arena transform has actually changed.
+                mHandler.removeCallbacks(mViveSystemRecenterRunnable);
+                mHandler.postDelayed(mViveSystemRecenterRunnable, VIVE_SYSTEM_RECENTER_DELAY_MS);
+                Log.i(LOGTAG, "VIVE XR menu key received; scheduling Wolvic recenter");
+            }
+        };
+
+        IntentFilter filter = new IntentFilter(VIVE_MENU_KEY_ACTION);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(mViveMenuKeyReceiver, filter, Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(mViveMenuKeyReceiver, filter);
+        }
+        Log.i(LOGTAG, "VIVE XR system recenter listener enabled");
+    }
+
+    private void unregisterViveMenuKeyReceiver() {
+        mHandler.removeCallbacks(mViveSystemRecenterRunnable);
+        if (mViveMenuKeyReceiver != null) {
+            unregisterReceiver(mViveMenuKeyReceiver);
+            mViveMenuKeyReceiver = null;
+        }
     }
 
     @Override
     protected void onDestroy() {
+        mHandler.removeCallbacks(mAutomaticUpdateCheckRunnable);
+        unregisterViveMenuKeyReceiver();
+        unregisterViveProximityListener();
         ((VRBrowserApplication)getApplication()).onActivityDestroy();
         SettingsStore.getInstance(getBaseContext()).setPid(0);
         mSearchEngineWrapper.unregisterForUpdates();
@@ -1134,18 +1331,30 @@ public class VRBrowserActivity extends PlatformActivity implements WidgetManager
             }
             mLastMotionEventWidgetHandle = widget != null ? widget.getHandle() : 0;
 
-            float scale = widget != null ? widget.getPlacement().textureScale : SettingsStore.getInstance(this).getDisplayDpi() / 100.0f;
+            float scaleX = widget != null ? widget.getPlacement().textureScale : SettingsStore.getInstance(this).getDisplayDpi() / 100.0f;
+            float scaleY = scaleX;
+            if (widget instanceof View) {
+                View widgetView = (View) widget;
+                if (widgetView.getWidth() > 0 && widgetView.getHeight() > 0) {
+                    // Map each axis from the native texture to the actual Android view.
+                    // Live resizes can briefly leave the two axes with different ratios.
+                    scaleX = (float) widget.getPlacement().textureWidth() / widgetView.getWidth();
+                    scaleY = (float) widget.getPlacement().textureHeight() / widgetView.getHeight();
+                }
+            }
             // We shouldn't divide the scale factor when we pass the motion event to the web engine
             if (widget instanceof WindowWidget) {
                 WindowWidget windowWidget = (WindowWidget) widget;
                 if (!windowWidget.isNativeContentVisible()) {
-                    scale = 1.0f;
+                    scaleX = 1.0f;
+                    scaleY = 1.0f;
                 }
             } else if (widget instanceof OverlayContentWidget) {
-                scale = 1.0f;
+                scaleX = 1.0f;
+                scaleY = 1.0f;
             }
-            final float x = aX / scale;
-            final float y = aY / scale;
+            final float x = aX / scaleX;
+            final float y = aY / scaleY;
 
             if (widget == null) {
                 MotionEventGenerator.dispatch(this, mRootWidget, aDevice, aFocused, aPressed, x, y);
@@ -1667,15 +1876,28 @@ public class VRBrowserActivity extends PlatformActivity implements WidgetManager
     }
 
     private void enqueueUpdateWidgetNativeCall(int handle, WidgetPlacement placement) {
-        mPendingNativeWidgetUpdates.put(handle, placement);
+        synchronized (mPendingNativeWidgetUpdates) {
+            mPendingNativeWidgetUpdates.put(handle, placement);
 
-        if (mNativeWidgetUpdatesTask == null || mNativeWidgetUpdatesTask.isDone()) {
-            mNativeWidgetUpdatesTask = mPendingNativeWidgetUpdatesExecutor.schedule(() -> {
-                for (Map.Entry<Integer, WidgetPlacement> entry : mPendingNativeWidgetUpdates.entrySet()) {
-                    queueRunnable(() -> updateWidgetNative(entry.getKey(), entry.getValue()));
-                }
-                mPendingNativeWidgetUpdates.clear();
-            }, UPDATE_NATIVE_WIDGETS_DELAY, TimeUnit.MILLISECONDS);
+            if (mNativeWidgetUpdatesTask == null || mNativeWidgetUpdatesTask.isDone()) {
+                mNativeWidgetUpdatesTask = mPendingNativeWidgetUpdatesExecutor.schedule(() -> {
+                    final LinkedHashMap<Integer, WidgetPlacement> updates;
+                    synchronized (mPendingNativeWidgetUpdates) {
+                        updates = new LinkedHashMap<>(mPendingNativeWidgetUpdates);
+                        mPendingNativeWidgetUpdates.clear();
+                        mNativeWidgetUpdatesTask = null;
+                    }
+
+                    // Apply the complete placement batch in one render-thread
+                    // task. Parent/child window swaps must not be visible in a
+                    // half-updated state for a frame.
+                    queueRunnable(() -> {
+                        for (Map.Entry<Integer, WidgetPlacement> entry : updates.entrySet()) {
+                            updateWidgetNative(entry.getKey(), entry.getValue());
+                        }
+                    });
+                }, DeviceType.isViveXR() ? 0 : UPDATE_NATIVE_WIDGETS_DELAY, TimeUnit.MILLISECONDS);
+            }
         }
     }
 
@@ -2205,7 +2427,10 @@ public class VRBrowserActivity extends PlatformActivity implements WidgetManager
 
     @Override
     public void checkEyeTrackingPermissions(@NonNull EyeTrackingCallback callback) {
-        if (isPermissionGranted(getEyeTrackingPermissionString())) {
+        final String eyeTrackingPermission = getEyeTrackingPermissionString();
+        // Some OpenXR runtimes enforce eye-gaze access internally and do not
+        // define an Android runtime permission for applications to request.
+        if (eyeTrackingPermission == null || isPermissionGranted(eyeTrackingPermission)) {
             callback.onEyeTrackingPermissionRequest(true);
             return;
         }
@@ -2219,7 +2444,7 @@ public class VRBrowserActivity extends PlatformActivity implements WidgetManager
         dialog.setButtonsDelegate((index, isChecked) -> {
             dialog.hide(UIWidget.REMOVE_WIDGET);
             dialog.releaseWidget();
-            requestPermission(null, getEyeTrackingPermissionString(), OriginatorType.APPLICATION, new WSession.PermissionDelegate.Callback() {
+            requestPermission(null, eyeTrackingPermission, OriginatorType.APPLICATION, new WSession.PermissionDelegate.Callback() {
                 @Override
                 public void grant() {
                     callback.onEyeTrackingPermissionRequest(true);

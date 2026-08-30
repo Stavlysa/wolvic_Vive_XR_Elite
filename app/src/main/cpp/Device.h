@@ -57,6 +57,7 @@ const DeviceType Pico4U = 20;
 const DeviceType PfdmYVR1 = 21;
 const DeviceType PfdmYVR2 = 22;
 const DeviceType PfdmMR = 23;
+const DeviceType ViveXRElite = 24;
 
 enum class TargetRayMode : uint8_t { Gaze, TrackedPointer, Screen };
 

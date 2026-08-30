@@ -11,7 +11,9 @@
 #include "vrb/Vector.h"
 #include "moz_external_vr.h"
 #include "Assertions.h"
+#include <algorithm>
 #include <assert.h>
+#include <chrono>
 #include <pthread.h>
 #include <unistd.h>
 
@@ -135,6 +137,16 @@ struct ExternalVR::State {
   // device::CapabilityFlags deviceCapabilities = 0;
   vrb::Matrix eyeTransforms[device::EyeCount];
   uint64_t lastFrameId = 0;
+  uint64_t pendingFrameId = 0;
+  uint64_t lastAcknowledgedFrameId = 0;
+  bool frameOwned = false;
+  std::chrono::steady_clock::time_point frameAcquireTime;
+  uint64_t frameAcquireToAckNanoseconds = 0;
+  uint64_t frameAcquireToAckMaxNanoseconds = 0;
+  uint32_t frameOwnershipCompletedCount = 0;
+  uint32_t frameOwnershipFreshCount = 0;
+  uint32_t frameOwnershipTimeoutCount = 0;
+  uint32_t frameOwnershipViolationCount = 0;
   bool firstPresentingFrame = false;
   bool compositorEnabled = true;
   bool waitingForExit = false;
@@ -157,6 +169,19 @@ struct ExternalVR::State {
     pthread_cond_destroy(&(data.servoCond));
   }
 
+  void ResetFrameOwnership() {
+    pendingFrameId = 0;
+    lastAcknowledgedFrameId = 0;
+    frameOwned = false;
+    frameAcquireTime = {};
+    frameAcquireToAckNanoseconds = 0;
+    frameAcquireToAckMaxNanoseconds = 0;
+    frameOwnershipCompletedCount = 0;
+    frameOwnershipFreshCount = 0;
+    frameOwnershipTimeoutCount = 0;
+    frameOwnershipViolationCount = 0;
+  }
+
   void Reset() {
     memset(&data, 0, sizeof(mozilla::gfx::VRExternalShmem));
     memset(&system, 0, sizeof(mozilla::gfx::VRSystemState));
@@ -171,6 +196,7 @@ struct ExternalVR::State {
     memcpy(system.sensorState.rightViewMatrix.data(), identity.Data(), arraySize(system.sensorState.rightViewMatrix));
     system.sensorState.pose.orientation[3] = 1.0f;
     lastFrameId = 0;
+    ResetFrameOwnership();
     firstPresentingFrame = false;
     waitingForExit = false;
     SetSourceBrowser(VRBrowserType::Gecko);
@@ -194,6 +220,7 @@ struct ExternalVR::State {
     }
     if (wasPresenting && !IsPresenting()) {
       lastFrameId = browser.layerState[0].layer_stereo_immersive.frameId;
+      ResetFrameOwnership();
       waitingForExit = false;
     }
   }
@@ -231,7 +258,8 @@ mozilla::gfx::VRControllerType GetVRControllerTypeByDevice(device::DeviceType aT
       result = mozilla::gfx::VRControllerType::OculusTouch3;
       break;
     case device::MetaQuest3:
-      result = mozilla::gfx::VRControllerType::MetaQuest3;
+      // Gecko 140 external VR ABI predates the Quest 3 controller enum.
+      result = mozilla::gfx::VRControllerType::OculusTouch3;
       break;
     case device::MetaQuestPro:
       // FIXME: GeckoView does not support Quest Pro yet. Pretend to be the Quest2
@@ -246,6 +274,7 @@ mozilla::gfx::VRControllerType GetVRControllerTypeByDevice(device::DeviceType aT
     // FIXME: Gecko does not support VRX. Controllers look similar to ViveFocusPlus
     case device::LenovoVRX:
     case device::ViveFocusPlus:
+    case device::ViveXRElite:
       result = mozilla::gfx::VRControllerType::HTCViveFocusPlus;
       break;
     case device::PicoGaze:
@@ -258,12 +287,13 @@ mozilla::gfx::VRControllerType GetVRControllerTypeByDevice(device::DeviceType aT
       result = mozilla::gfx::VRControllerType::PicoG2;
       break;
     case device::PicoNeo3:
-      result = mozilla::gfx::VRControllerType::PicoNeo3;
+      // Gecko 140 external VR ABI only exposes PicoNeo2.
+      result = mozilla::gfx::VRControllerType::PicoNeo2;
       break;
     case device::Pico4x:
     case device::Pico4U:
-      // FIXME: Gecko does not support Pico4U device yet, so let's use a similar one for WebXR.
-      result = mozilla::gfx::VRControllerType::Pico4;
+      // Gecko 140 external VR ABI only exposes PicoNeo2.
+      result = mozilla::gfx::VRControllerType::PicoNeo2;
       break;
     case device::MagicLeap2:
       // FIXME: Gecko does not support ML2 device yet, so let's use a similar one for WebXR.
@@ -275,10 +305,10 @@ mozilla::gfx::VRControllerType GetVRControllerTypeByDevice(device::DeviceType aT
       break;
     case device::PfdmYVR1:
     case device::PfdmYVR2:
-      result = mozilla::gfx::VRControllerType::YvrTouch;
+      result = mozilla::gfx::VRControllerType::OculusTouch3;
       break;
     case device::PfdmMR:
-      result = mozilla::gfx::VRControllerType::YvrTouch2;
+      result = mozilla::gfx::VRControllerType::OculusTouch3;
       break;
     case device::UnknownType:
     default:
@@ -374,9 +404,12 @@ ExternalVR::SetEyeOffset(const device::Eye aEye, const float aX, const float aY,
 void
 ExternalVR::SetEyeTransform(const device::Eye aEye, const vrb::Matrix& aTransform) {
   mozilla::gfx::VRDisplayState::Eye which = (aEye == device::Eye::Right
-                                             ? mozilla::gfx::VRDisplayState::Eye_Right
-                                             : mozilla::gfx::VRDisplayState::Eye_Left);
-  memcpy(m.system.displayState.eyeTransform[which].data(), aTransform.Data(), arraySize(m.system.displayState.eyeTransform[which]));
+                                              ? mozilla::gfx::VRDisplayState::Eye_Right
+                                              : mozilla::gfx::VRDisplayState::Eye_Left);
+  const vrb::Vector translation = aTransform.GetTranslation();
+  m.system.displayState.eyeTranslation[which].x = translation.x();
+  m.system.displayState.eyeTranslation[which].y = translation.y();
+  m.system.displayState.eyeTranslation[which].z = translation.z();
   m.eyeTransforms[device::EyeIndex(aEye)] = aTransform;
 }
 
@@ -404,23 +437,27 @@ ExternalVR::SetSittingToStandingTransform(const vrb::Matrix& aTransform) {
 
 void
 ExternalVR::SetBlendModes(std::vector<device::BlendMode> aBlendModes) {
-  std::fill(m.system.displayState.blendModes.begin(), m.system.displayState.blendModes.end(), mozilla::gfx::VRDisplayBlendMode::_empty);
-  int i = 0;
-  for (const auto& blendMode : aBlendModes) {
-    switch (blendMode) {
-      case device::BlendMode::Opaque:
-        m.system.displayState.blendModes[i++] = mozilla::gfx::VRDisplayBlendMode::Opaque;
-        break;
-      case device::BlendMode::Additive:
-        m.system.displayState.blendModes[i++] = mozilla::gfx::VRDisplayBlendMode::Additive;
-        break;
-      case device::BlendMode::AlphaBlend:
-        m.system.displayState.blendModes[i++] = mozilla::gfx::VRDisplayBlendMode::AlphaBlend;
-        break;
-      default:
-        THROW(Fmt("Unknown blend mode", (int) blendMode));
-        break;
-    }
+  // Gecko 140 external VR ABI advertises one blend mode rather than a list.
+  // Prefer opaque when the runtime supports it.
+  device::BlendMode blendMode = device::BlendMode::Opaque;
+  if (std::find(aBlendModes.begin(), aBlendModes.end(), device::BlendMode::Opaque) == aBlendModes.end() &&
+      !aBlendModes.empty()) {
+    blendMode = aBlendModes.front();
+  }
+
+  switch (blendMode) {
+    case device::BlendMode::Opaque:
+      m.system.displayState.blendMode = mozilla::gfx::VRDisplayBlendMode::Opaque;
+      break;
+    case device::BlendMode::Additive:
+      m.system.displayState.blendMode = mozilla::gfx::VRDisplayBlendMode::Additive;
+      break;
+    case device::BlendMode::AlphaBlend:
+      m.system.displayState.blendMode = mozilla::gfx::VRDisplayBlendMode::AlphaBlend;
+      break;
+    default:
+      THROW(Fmt("Unknown blend mode", (int) blendMode));
+      break;
   }
 }
 
@@ -472,6 +509,7 @@ ExternalVR::SetCompositorEnabled(bool aEnabled) {
     m.system.displayState.suppressFrames = true;
     m.system.displayState.lastSubmittedFrameId = 0;
     m.lastFrameId = 0;
+    m.ResetFrameOwnership();
     PushSystemState();
     VRBrowser::OnEnterWebXR();
     m.system.displayState.suppressFrames = false;
@@ -522,7 +560,7 @@ ExternalVR::GetVRState() const {
   return VRState::Rendering;
 }
 
-void
+uint64_t
 ExternalVR::PushFramePoses(const vrb::Matrix& aHeadTransform, const std::vector<Controller>& aControllers, const double aTimestamp) {
   const vrb::Matrix inverseHeadTransform = aHeadTransform.Inverse();
   vrb::Quaternion quaternion(inverseHeadTransform);
@@ -530,7 +568,15 @@ ExternalVR::PushFramePoses(const vrb::Matrix& aHeadTransform, const std::vector<
   memcpy(m.system.sensorState.pose.orientation.data(), quaternion.Data(), arraySize(m.system.sensorState.pose.orientation));
   memcpy(m.system.sensorState.pose.position.data(), translation.Data(), arraySize(m.system.sensorState.pose.position));
   m.system.sensorState.inputFrameID++;
+#if defined(VIVEXR)
+  // The VIVE OpenXR path acknowledges a single-buffer SurfaceTexture only
+  // after it has been released at the end of the XR frame.
+  m.system.displayState.lastSubmittedFrameId = m.lastAcknowledgedFrameId;
+#else
+  // Wave and the other legacy backends use Gecko's established immediate ACK
+  // flow. They do not retain an OpenXR swapchain image across this boundary.
   m.system.displayState.lastSubmittedFrameId = m.lastFrameId;
+#endif
 
   vrb::Matrix leftView = m.eyeTransforms[device::EyeIndex(device::Eye::Left)].Inverse().PostMultiply(inverseHeadTransform);
   vrb::Matrix rightView = m.eyeTransforms[device::EyeIndex(device::Eye::Right)].Inverse().PostMultiply(inverseHeadTransform);
@@ -618,6 +664,7 @@ ExternalVR::PushFramePoses(const vrb::Matrix& aHeadTransform, const std::vector<
   m.system.sensorState.timestamp = aTimestamp;
 
   PushSystemState();
+  return m.system.sensorState.inputFrameID;
 }
 
 bool
@@ -627,11 +674,29 @@ ExternalVR::WaitFrameResult() {
   // browserMutex is locked in wait.lock().
   m.PullBrowserStateWhileLocked();
   while (true) {
-    if (!IsPresenting() || m.browser.layerState[0].layer_stereo_immersive.frameId != m.lastFrameId) {
+    const uint64_t browserFrameId =
+        m.browser.layerState[0].layer_stereo_immersive.frameId;
+    if (!IsPresenting()) {
       m.firstPresentingFrame = false;
+      break;
+    }
+    if (browserFrameId != m.lastFrameId) {
+      m.firstPresentingFrame = false;
+#if defined(VIVEXR)
+      if (m.frameOwned) {
+        ++m.frameOwnershipViolationCount;
+        VRB_WARN("VIVE XR Gecko frame ownership violation: pending=%llu incoming=%llu",
+                 static_cast<unsigned long long>(m.pendingFrameId),
+                 static_cast<unsigned long long>(browserFrameId));
+      }
+      m.pendingFrameId = browserFrameId;
+      m.frameOwned = true;
+      m.frameAcquireTime = std::chrono::steady_clock::now();
+      ++m.frameOwnershipFreshCount;
+#else
       m.system.displayState.lastSubmittedFrameSuccessful = true;
-      m.system.displayState.lastSubmittedFrameId = m.browser.layerState[0].layer_stereo_immersive.frameId;
-      // VRB_LOG("RequestFrame BREAK %llu",  m.browser.layerState[0].layer_stereo_immersive.frameId);
+      m.system.displayState.lastSubmittedFrameId = browserFrameId;
+#endif
       break;
     }
 
@@ -646,10 +711,23 @@ ExternalVR::WaitFrameResult() {
       return true; // Do not block to show loading screen until the first frame arrives.
     }
     // VRB_LOG("RequestFrame ABOUT TO WAIT FOR FRAME %llu %llu",m.browser.layerState[0].layer_stereo_immersive.frameId, m.lastFrameId);
+#if defined(VIVEXR)
+    // Do not let Gecko's WebXR frame rate pace the OpenXR frame loop. A short
+    // wait still gives a completed browser frame priority, but on timeout the
+    // VIVE path submits the previously released swapchain image again so the
+    // runtime can keep asynchronous head-pose reprojection running at the
+    // display refresh rate. A zero timeout is not valid here: Wait::DoWait(0)
+    // means wait indefinitely.
+    const float kConditionTimeout = 0.001f;
+#else
     const float kConditionTimeout = 0.25f;
+#endif
     // Wait causes the current thread to block until the condition variable is notified or the timeout happens.
     // Waiting for the condition variable releases the mutex atomically. So GV can modify the browser data.
     if (!wait.DoWait(kConditionTimeout)) {
+#if defined(VIVEXR)
+      ++m.frameOwnershipTimeoutCount;
+#endif
       return false;
     }
     // VRB_LOG("RequestFrame DONE TO WAIT FOR FRAME");
@@ -662,14 +740,84 @@ ExternalVR::WaitFrameResult() {
 }
 
 void
+ExternalVR::CompleteFrameResult(bool aSuccessful) {
+  if (!m.frameOwned) {
+    return;
+  }
+
+  if (m.pendingFrameId != m.lastFrameId) {
+    ++m.frameOwnershipViolationCount;
+    VRB_WARN("VIVE XR Gecko frame ACK mismatch: pending=%llu acquired=%llu",
+             static_cast<unsigned long long>(m.pendingFrameId),
+             static_cast<unsigned long long>(m.lastFrameId));
+  }
+
+  m.system.displayState.lastSubmittedFrameSuccessful = aSuccessful;
+  m.system.displayState.lastSubmittedFrameId = m.pendingFrameId;
+  m.lastAcknowledgedFrameId = m.pendingFrameId;
+
+#if defined(VIVEXR)
+  if (m.frameAcquireTime.time_since_epoch().count() != 0) {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - m.frameAcquireTime).count();
+    if (elapsed > 0) {
+      const uint64_t elapsedNanoseconds = static_cast<uint64_t>(elapsed);
+      m.frameAcquireToAckNanoseconds += elapsedNanoseconds;
+      m.frameAcquireToAckMaxNanoseconds =
+          std::max(m.frameAcquireToAckMaxNanoseconds, elapsedNanoseconds);
+    }
+  }
+  if (++m.frameOwnershipCompletedCount == 90) {
+    VRB_LOG("VIVE XR Gecko frame ownership: fresh=%u timeouts=%u violations=%u avgAcquireToAck=%.3fms maxAcquireToAck=%.3fms latestInput=%llu renderedInput=%llu",
+            m.frameOwnershipFreshCount, m.frameOwnershipTimeoutCount,
+            m.frameOwnershipViolationCount,
+            static_cast<double>(m.frameAcquireToAckNanoseconds) / 90000000.0,
+            static_cast<double>(m.frameAcquireToAckMaxNanoseconds) / 1000000.0,
+            static_cast<unsigned long long>(m.system.sensorState.inputFrameID),
+            static_cast<unsigned long long>(
+                m.browser.layerState[0].layer_stereo_immersive.inputFrameId));
+    m.frameAcquireToAckNanoseconds = 0;
+    m.frameAcquireToAckMaxNanoseconds = 0;
+    m.frameOwnershipCompletedCount = 0;
+    m.frameOwnershipFreshCount = 0;
+    m.frameOwnershipTimeoutCount = 0;
+    m.frameOwnershipViolationCount = 0;
+  }
+#endif
+
+  m.pendingFrameId = 0;
+  m.frameOwned = false;
+  m.frameAcquireTime = {};
+
+  // Gecko's submit thread is blocked on this signal. Sending it in the same
+  // OpenXR iteration gives the next WebXR RAF almost one extra display period
+  // compared with waiting for the next PushFramePoses call.
+  PushSystemState();
+}
+
+void
 ExternalVR::CompleteEnumeration()
 {
   m.system.enumerationCompleted = true;
+  VRB_LOG("ExternalVR enumeration complete: version=%d size=%zu caps=0x%x blend=%d eye=%dx%d connected=%d mounted=%d",
+          mozilla::gfx::kVRExternalVersion,
+          sizeof(mozilla::gfx::VRExternalShmem),
+          static_cast<unsigned int>(m.system.displayState.capabilityFlags),
+          static_cast<int>(m.system.displayState.blendMode),
+          m.system.displayState.eyeResolution.width,
+          m.system.displayState.eyeResolution.height,
+          m.system.displayState.isConnected ? 1 : 0,
+          m.system.displayState.isMounted ? 1 : 0);
+  // CompleteEnumeration can run immediately after the external context is
+  // registered. Publish here instead of waiting for the first world frame so
+  // Gecko cannot cache the earlier empty runtime state.
+  PushSystemState();
 }
 
 
 void
 ExternalVR::GetFrameResult(int32_t& aSurfaceHandle, int32_t& aTextureWidth, int32_t& aTextureHeight,
+    uint64_t& aInputFrameId,
     device::EyeRect& aLeftEye, device::EyeRect& aRightEye) const {
   aSurfaceHandle = (int32_t)m.browser.layerState[0].layer_stereo_immersive.textureHandle;
   mozilla::gfx::VRLayerEyeRect& left = m.browser.layerState[0].layer_stereo_immersive.leftEyeRect;
@@ -678,6 +826,7 @@ ExternalVR::GetFrameResult(int32_t& aSurfaceHandle, int32_t& aTextureWidth, int3
   aRightEye = device::EyeRect(right.x, right.y, right.width, right.height);
   aTextureWidth = (int32_t)m.browser.layerState[0].layer_stereo_immersive.textureSize.width;
   aTextureHeight = (int32_t)m.browser.layerState[0].layer_stereo_immersive.textureSize.height;
+  aInputFrameId = m.browser.layerState[0].layer_stereo_immersive.inputFrameId;
 }
 
 void
@@ -728,8 +877,7 @@ ExternalVR::StopPresenting() {
 device::BlendMode
 ExternalVR::GetImmersiveBlendMode() const {
   ASSERT(IsPresenting());
-  switch (m.browser.blendMode) {
-    case mozilla::gfx::VRDisplayBlendMode::_empty:
+  switch (m.system.displayState.blendMode) {
     case mozilla::gfx::VRDisplayBlendMode::Opaque:
       return device::BlendMode::Opaque;
     case mozilla::gfx::VRDisplayBlendMode::Additive:
@@ -742,15 +890,9 @@ ExternalVR::GetImmersiveBlendMode() const {
 DeviceDelegate::ImmersiveXRSessionType
 ExternalVR::GetImmersiveXRSessionType() const {
   ASSERT(IsPresenting());
-  switch (m.browser.sessionType) {
-    case mozilla::gfx::ImmersiveXRSessionType::VR:
-      return DeviceDelegate::ImmersiveXRSessionType::VR;
-    case mozilla::gfx::ImmersiveXRSessionType::AR:
-      return DeviceDelegate::ImmersiveXRSessionType::AR;
-    default:
-      THROW(Fmt("Unknown immersive session type %d", (int) m.browser.sessionType));
-      return DeviceDelegate::ImmersiveXRSessionType::VR;
-  }
+  // Gecko 140's external VR browser state does not carry a session type.
+  // Its external presentation path is therefore treated as immersive-vr.
+  return DeviceDelegate::ImmersiveXRSessionType::VR;
 }
 
 ExternalVR::ExternalVR(): m(State::Instance()) {

@@ -922,7 +922,12 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
                 } else {
                     WifiInfo currentWifi = wifiManager.getConnectionInfo();
                     if (currentWifi != null) {
-                        mWifiSSID = currentWifi.getSSID().replaceAll("\"", "");
+                        String ssid = currentWifi.getSSID();
+                        if (ssid == null || ssid.isEmpty() || WifiManager.UNKNOWN_SSID.equals(ssid)) {
+                            mWifiSSID = getContext().getString(R.string.tray_wifi_unavailable_ssid);
+                        } else {
+                            mWifiSSID = ssid.replaceAll("\"", "");
+                        }
 
                     } else {
                         mWifiSSID = getContext().getString(R.string.tray_wifi_no_connection);

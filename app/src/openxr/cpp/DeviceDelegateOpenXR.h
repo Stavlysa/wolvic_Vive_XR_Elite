@@ -48,6 +48,8 @@ public:
   void ProcessEvents() override;
   bool SupportsFramePrediction(FramePrediction aPrediction) const override;
   void StartFrame(const FramePrediction aPrediction) override;
+  void RecordImmersiveFramePose(uint64_t aInputFrameId) override;
+  void SelectImmersiveFramePose(uint64_t aInputFrameId) override;
   void BindEye(const device::Eye aWhich) override;
   void EndFrame(const FrameEndMode aMode) override;
   VRLayerQuadPtr CreateLayerQuad(int32_t aWidth, int32_t aHeight,

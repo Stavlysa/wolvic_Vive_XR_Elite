@@ -106,6 +106,9 @@ public class WebXRInterstitialWidget extends UIWidget implements WidgetManagerDe
         } else if (deviceType == DeviceType.ViveFocusPlus) {
             addController(DeviceType.ViveFocusPlus, WebXRInterstitialController.HAND_LEFT);
             addController(DeviceType.ViveFocusPlus, WebXRInterstitialController.HAND_RIGHT);
+        } else if (deviceType == DeviceType.ViveXRElite) {
+            addController(DeviceType.ViveXRElite, WebXRInterstitialController.HAND_LEFT);
+            addController(DeviceType.ViveXRElite, WebXRInterstitialController.HAND_RIGHT);
         } else if (deviceType == DeviceType.PicoNeo3) {
             addController(DeviceType.PicoNeo3, WebXRInterstitialController.HAND_LEFT);
             addController(DeviceType.PicoNeo3, WebXRInterstitialController.HAND_RIGHT);

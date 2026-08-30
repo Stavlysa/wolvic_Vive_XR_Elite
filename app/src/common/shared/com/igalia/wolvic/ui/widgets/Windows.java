@@ -504,6 +504,10 @@ public class Windows implements TrayListener, TopBarWidget.Delegate, TitleBarWid
             placeWindow(frontWindow, WindowPlacement.RIGHT);
         }
         updateViews();
+        // placeWindow() reserves room for a vertical tabs bar on the side.
+        // Reapply the active tabs layout after a swap; otherwise tray or
+        // horizontal-tab configurations keep that temporary side gap.
+        adjustWindowOffsets();
         if (mDelegate != null) {
             mDelegate.onWindowsMoved();
         }
@@ -529,6 +533,9 @@ public class Windows implements TrayListener, TopBarWidget.Delegate, TitleBarWid
             placeWindow(frontWindow, WindowPlacement.LEFT);
         }
         updateViews();
+        // Keep side spacing consistent with the current tabs layout after the
+        // front window changes parent/placement.
+        adjustWindowOffsets();
         if (mDelegate != null) {
             mDelegate.onWindowsMoved();
         }
@@ -545,6 +552,20 @@ public class Windows implements TrayListener, TopBarWidget.Delegate, TitleBarWid
             if (mDelegate != null) {
                 mDelegate.onFocusedWindowChanged(mFocusedWindow, prev);
             }
+            updateBackgroundWindowActivity();
+        }
+    }
+
+    /**
+     * Keep the focused Gecko session active while retaining the last rendered frame for other
+     * visible windows. WindowWidget detaches Gecko from a background surface before deactivating
+     * the session so the inactive clear frame cannot replace the last page frame.
+     */
+    private void updateBackgroundWindowActivity() {
+        boolean throttle = SettingsStore.getInstance(mContext).isBackgroundWindowThrottlingEnabled();
+        WindowWidget focusedWindow = getFocusedWindow();
+        for (WindowWidget window : getCurrentWindows()) {
+            window.setBackgroundThrottled(throttle && window != focusedWindow);
         }
     }
 
@@ -588,6 +609,7 @@ public class Windows implements TrayListener, TopBarWidget.Delegate, TitleBarWid
 
         TelemetryService.resetOpenedWindowsCount(mRegularWindows.size(), false);
         TelemetryService.resetOpenedWindowsCount(mPrivateWindows.size(), true);
+        updateBackgroundWindowActivity();
     }
 
     public boolean isPaused() {
@@ -667,6 +689,7 @@ public class Windows implements TrayListener, TopBarWidget.Delegate, TitleBarWid
         // the fullscreen window when exiting.
         if (mFullscreenWindow != null)
             mFullscreenWindow.getSession().exitFullScreen();
+        updateBackgroundWindowActivity();
     }
 
     private void closeLibraryPanelInFocusedWindowIfNeeded() {
@@ -799,6 +822,18 @@ public class Windows implements TrayListener, TopBarWidget.Delegate, TitleBarWid
         return getCurrentWindows(mPrivateMode);
     }
 
+    public void applyWindowSizePreset(int aWidth, int aHeight) {
+        if (mFullscreenWindow != null) {
+            return;
+        }
+
+        for (WindowWidget window : getCurrentWindows()) {
+            window.resizeToDimensions(aWidth, aHeight);
+        }
+        updateMaxWindowScales();
+        mWidgetManager.updateVisibleWidgets();
+    }
+
     @Nullable
     private WindowWidget getWindowWithPlacement(WindowPlacement aPlacement, boolean privateMode) {
         for (WindowWidget window: privateMode ? mPrivateWindows : mRegularWindows) {
@@ -909,6 +944,7 @@ public class Windows implements TrayListener, TopBarWidget.Delegate, TitleBarWid
         }
 
         mAfterRestore = true;
+        updateBackgroundWindowActivity();
     }
 
     private void removeWindow(@NonNull WindowWidget aWindow) {
@@ -1039,6 +1075,10 @@ public class Windows implements TrayListener, TopBarWidget.Delegate, TitleBarWid
                 placeWindow(window, window.getWindowPlacement(), curved, mCenterWindows);
             }
             updateViews();
+            // placeWindow() reserves the vertical-tabs width for side windows.
+            // Reapply the active tabs layout after toggling curved display so
+            // horizontal/tray tabs do not leave a large gap between windows.
+            adjustWindowOffsets();
             mWidgetManager.setCylinderDensity(curved ? SettingsStore.CYLINDER_DENSITY_ENABLED_DEFAULT : density);
 
         } else if ((storedCurvedMode != mStoredCurvedMode) || (forcedCurvedMode != mForcedCurvedMode)) {
@@ -1050,6 +1090,7 @@ public class Windows implements TrayListener, TopBarWidget.Delegate, TitleBarWid
                 placeWindow(window, window.getWindowPlacement(), curved, mCenterWindows);
             }
             updateViews();
+            adjustWindowOffsets();
             mWidgetManager.setCylinderDensity(curved ? SettingsStore.CYLINDER_DENSITY_ENABLED_DEFAULT : density);
         }
     }
@@ -1100,7 +1141,12 @@ public class Windows implements TrayListener, TopBarWidget.Delegate, TitleBarWid
         }
 
         // Sort windows so frontWindow is the first one. Required for proper native matrix updates.
-        windows.sort((o1, o2) -> o1 == frontWindow ? -1 : 0);
+        windows.sort((o1, o2) -> {
+            if (o1 == frontWindow) {
+                return o2 == frontWindow ? 0 : -1;
+            }
+            return o2 == frontWindow ? 1 : 0;
+        });
         for (WindowWidget window: getCurrentWindows()) {
             mWidgetManager.updateWidget(window);
             mWidgetManager.updateWidget(window.getTopBar());
@@ -1163,6 +1209,11 @@ public class Windows implements TrayListener, TopBarWidget.Delegate, TitleBarWid
                 @Override
                 public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
                     WindowWidget frontWindow = getFrontWindow();
+
+                    if (Objects.equals(key, mContext.getString(R.string.settings_key_background_window_throttling))) {
+                        updateBackgroundWindowActivity();
+                        return;
+                    }
 
                     if (Objects.equals(key, mContext.getString(R.string.settings_key_window_movement))) {
                         // Reset the position of the windows when the setting becomes disabled.
@@ -1467,6 +1518,7 @@ public class Windows implements TrayListener, TopBarWidget.Delegate, TitleBarWid
         }
         updateMaxWindowScales();
         updateCurvedMode(true);
+        updateBackgroundWindowActivity();
 
     }
 

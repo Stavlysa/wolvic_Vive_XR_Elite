@@ -17,6 +17,7 @@ import com.igalia.wolvic.browser.HistoryStore;
 import com.igalia.wolvic.browser.PermissionDelegate;
 import com.igalia.wolvic.browser.Services;
 import com.igalia.wolvic.browser.SessionChangeListener;
+import com.igalia.wolvic.browser.SettingsStore;
 import com.igalia.wolvic.browser.WebAppsStore;
 import com.igalia.wolvic.browser.adapter.ComponentsAdapter;
 import com.igalia.wolvic.browser.api.WResult;
@@ -157,7 +158,11 @@ public class SessionStore implements
 
         ComponentsAdapter.get().addStoreUpdatesListener(this);
 
-        if (BuildConfig.DEBUG) {
+        // This listener walks and logs every browser session for each store
+        // update. It is useful for diagnostics but creates avoidable main-
+        // thread work on XR hardware, so only install it when verbose logging
+        // has explicitly been enabled.
+        if (BuildConfig.DEBUG && SettingsStore.getInstance(mContext).isDebugLoggingEnabled()) {
             mStoreSubscription = ComponentsAdapter.get().getStore().observeManually(browserState -> {
                 ((Activity)mContext).runOnUiThread(() -> {
                     if (mSessions == null || browserState == null) {

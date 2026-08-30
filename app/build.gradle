@@ -45,8 +45,10 @@ def getDevApplicationIdSuffix = { ->
 }
 
 def getUseDebugSigningOnRelease = { ->
-    if (gradle.hasProperty("userProperties.useDebugSigningOnRelease")) {
-        return gradle."userProperties.useDebugSigningOnRelease" == "true"
+    // -P values are project properties. Querying the Gradle object leaves this
+    // false and silently produces an unsigned APK even when the flag is set.
+    if (project.hasProperty("userProperties.useDebugSigningOnRelease")) {
+        return project.property("userProperties.useDebugSigningOnRelease") == "true"
     }
     return false
 }
@@ -106,6 +108,23 @@ def isWebKitAvailable = {
 def GECKO_RELEASE_VERSION_NAME = '2.0'
 def CHROMIUM_RELEASE_VERSION_NAME = '1.4'
 
+// The Wave SDK is license-gated and is kept outside the source checkout.
+// Only Wave build tasks unpack the public headers and linker library needed
+// by CMake; Gradle resolves the runtime AAR from the local Maven repository.
+def WAVE_SDK_VERSION = '5.6.0'
+def waveSdkAar = file("${project.rootDir}/../vive-wave-sdk-5.6.0/repo/com/htc/vr/wvr_client/${WAVE_SDK_VERSION}/wvr_client-${WAVE_SDK_VERSION}.aar")
+def waveSdkExtractDir = file("${project.rootDir}/third_party/wavesdk/build/wvr_client-${WAVE_SDK_VERSION}")
+
+if (gradle.startParameter.taskNames.any { it.toLowerCase().contains('wavevr') }) {
+    if (!waveSdkAar.isFile()) {
+        throw new GradleException("Wave Native SDK ${WAVE_SDK_VERSION} was not found at ${waveSdkAar}")
+    }
+    copy {
+        from zipTree(waveSdkAar)
+        into waveSdkExtractDir
+    }
+}
+
 android {
     namespace 'com.igalia.wolvic'
     compileSdkVersion 36
@@ -138,8 +157,6 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags "-std=c++14 -fexceptions -frtti -Werror" +
-                         " -I" + file("src/main/cpp").absolutePath +
-                         " -I" + file("src/main/cpp/vrb/include").absolutePath +
                          // CMake 3.10+ needs "-DANDROID" flag, since ANDROID
                          // flag has been removed in favor of __ANDROID__. But
                          // vrb still uses "#if defined(ANDROID)"
@@ -196,7 +213,14 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig getUseDebugSigningOnRelease() ? debug.signingConfig : release.signingConfig
+            // Refer to the signing config directly. Reading debug.signingConfig
+            // here is order-dependent because the debug build type is declared
+            // below this block, and can therefore leave a local release APK
+            // unsigned even when useDebugSigningOnRelease=true. Normal release
+            // builds intentionally remain unsigned for the distributor to sign.
+            if (getUseDebugSigningOnRelease()) {
+                signingConfig signingConfigs.debug
+            }
             buildConfigField 'String', 'OTEL_ENDPOINT', "\"${getOtelEndpoint()}\""
         }
         debug {
@@ -317,6 +341,41 @@ android {
                 }
             }
             buildConfigField "Float", "DEFAULT_DENSITY", "1.0f"
+        }
+
+        // VIVE XR Elite uses HTC's Android OpenXR runtime. Reuse the generic
+        // AOSP/GameActivity backend while keeping a dedicated flavor for the
+        // device-specific manifest and controller interaction profile.
+        vivexr {
+            dimension "platform"
+            externalNativeBuild {
+                cmake {
+                    cppFlags " -DVIVEXR -DAOSP -DOPENXR"
+                    arguments "-DAOSP=ON", "-DOPENXR=ON"
+                }
+            }
+            // VIVE XR Elite has enough panel resolution for a sharper browser
+            // surface while keeping WebXR eye buffers independent.
+            buildConfigField "Float", "DEFAULT_DENSITY", "1.25f"
+        }
+
+        // Public HTC Wave backend for VIVE XR Elite. It intentionally keeps
+        // the normal Wolvic application id so upgrades preserve the profile;
+        // archived OpenXR APKs remain available for rollback.
+        wavevr {
+            dimension "platform"
+            minSdkVersion 25
+            targetSdkVersion 31
+            resValue "string", "app_name", "Wolvic Wave Test"
+            externalNativeBuild {
+                cmake {
+                    cppFlags " -DWAVEVR"
+                    arguments "-DVR_SDK_LIB=wavevr-lib",
+                              "-DWAVEVR=ON",
+                              "-DWAVE_SDK_ROOT=${waveSdkExtractDir.absolutePath}"
+                }
+            }
+            buildConfigField "Float", "DEFAULT_DENSITY", "1.25f"
         }
 
         hvr {
@@ -525,6 +584,22 @@ android {
             manifest.srcFile "src/aosp/AndroidManifest.xml"
         }
 
+        vivexr {
+            manifest.srcFile "src/vivexr/AndroidManifest.xml"
+        }
+
+        wavevr {
+            java.srcDirs = [
+                    'src/wavevr/java'
+            ]
+            // Reuse the XR Elite-specific window sizing and WebXR
+            // interstitial while the renderer comes from Wave.
+            res.srcDirs = [
+                    'src/vivexr/res'
+            ]
+            manifest.srcFile "src/wavevr/AndroidManifest.xml"
+        }
+
         noapi {
             java.srcDirs = [
                     'src/noapi/java'
@@ -623,6 +698,9 @@ configurations {
 dependencies {
     implementation fileTree(include: ['*.jar'], dir: 'libs')
 
+    // Public Wave runtime API. Its POM also brings in vr.client.abi 5.6.0.
+    wavevrImplementation "com.htc.vr:wvr_client:${WAVE_SDK_VERSION}"
+
     // Common
     implementation libs.lifecycle.runtime
     implementation libs.lifecycle.viewmodel
@@ -691,6 +769,7 @@ dependencies {
     lynxImplementation libs.openxrloader10
     spacesImplementation libs.openxrloader10
     aospImplementation libs.openxrloader10
+    vivexrImplementation libs.openxrloader10
     hvrImplementation libs.openxrloader10
 
     // Testing
@@ -714,6 +793,9 @@ dependencies {
 
     // AOSP
     aospImplementation libs.games.activity
+
+    // VIVE XR Elite (AOSP/GameActivity OpenXR backend)
+    vivexrImplementation libs.games.activity
 
     // HVR
     hvrImplementation fileTree(dir: "${project.rootDir}/third_party/hvr", include: ['*.jar'])

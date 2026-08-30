@@ -27,6 +27,7 @@ public class MotionEventGenerator {
         boolean mWasPressed;
         long mDownTime;
         MotionEvent.PointerProperties mProperties[];
+        MotionEvent.PointerProperties mGenericProperties[];
         MotionEvent.PointerCoords mCoords[];
         MotionEvent.PointerCoords mMouseOutCoords[];
 
@@ -36,6 +37,10 @@ public class MotionEventGenerator {
             mProperties[0] = new MotionEvent.PointerProperties();
             mProperties[0].id = 0;
             mProperties[0].toolType = MotionEvent.TOOL_TYPE_FINGER;
+            mGenericProperties = new MotionEvent.PointerProperties[1];
+            mGenericProperties[0] = new MotionEvent.PointerProperties();
+            mGenericProperties[0].id = 0;
+            mGenericProperties[0].toolType = MotionEvent.TOOL_TYPE_MOUSE;
             mCoords = new MotionEvent.PointerCoords[1];
             mCoords[0] = new MotionEvent.PointerCoords();
             mMouseOutCoords = new MotionEvent.PointerCoords[1];
@@ -64,7 +69,7 @@ public class MotionEventGenerator {
                 /*eventTime*/ SystemClock.uptimeMillis(),
                 /*action*/ aAction,
                 /*pointerCount*/ 1,
-                /*pointerProperties*/ aDevice.mProperties,
+                /*pointerProperties*/ aGeneric ? aDevice.mGenericProperties : aDevice.mProperties,
                 /*pointerCoords*/ aCoords,
                 /*metaState*/ 0,
                 /*buttonState*/ 0,
@@ -72,7 +77,7 @@ public class MotionEventGenerator {
                 /*yPrecision*/ 0,
                 /*deviceId*/ aDevice.mDevice,
                 /*edgeFlags*/ 0,
-                /*source*/ InputDevice.SOURCE_TOUCHSCREEN,
+                /*source*/ aGeneric ? InputDevice.SOURCE_MOUSE : InputDevice.SOURCE_TOUCHSCREEN,
                 /*flags*/ 0);
         if (aGeneric) {
             if (aWidget.supportsMultipleInputDevices()) {

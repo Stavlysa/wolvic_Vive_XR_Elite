@@ -461,6 +461,35 @@ namespace crow {
             },
     };
 
+    // VIVE Focus 3 and XR Elite share the same controllers and OpenXR
+    // interaction profile. The generic local model keeps the standalone UI
+    // usable without bundling HTC's proprietary controller assets; WebXR
+    // pages resolve the htc-vive-focus-3 profile from the public registry.
+    const OpenXRInputMapping ViveXRElite {
+            "/interaction_profiles/htc/vive_focus3_controller",
+            "generic-trigger.obj",
+            "generic-trigger.obj",
+            device::ViveXRElite,
+            std::vector<OpenXRInputProfile> { "htc-vive-focus-3", "generic-trigger-squeeze-thumbstick" },
+            std::vector<OpenXRButton> {
+                    { OpenXRButtonType::Trigger, kPathTrigger, OpenXRButtonFlags::All, OpenXRHandFlags::Both },
+                    { OpenXRButtonType::Squeeze, kPathSqueeze, OpenXRButtonFlags::All, OpenXRHandFlags::Both },
+                    { OpenXRButtonType::Thumbstick, kPathThumbstick, OpenXRButtonFlags::ClickTouch, OpenXRHandFlags::Both },
+                    { OpenXRButtonType::ButtonX, kPathButtonX, OpenXRButtonFlags::Click, OpenXRHandFlags::Left },
+                    { OpenXRButtonType::ButtonY, kPathButtonY, OpenXRButtonFlags::Click, OpenXRHandFlags::Left },
+                    { OpenXRButtonType::ButtonA, kPathButtonA, OpenXRButtonFlags::Click, OpenXRHandFlags::Right },
+                    { OpenXRButtonType::ButtonB, kPathButtonB, OpenXRButtonFlags::Click, OpenXRHandFlags::Right },
+                    { OpenXRButtonType::Thumbrest, kPathThumbrest, OpenXRButtonFlags::Touch, OpenXRHandFlags::Both },
+                    { OpenXRButtonType::Menu, kPathMenu, OpenXRButtonFlags::Click, OpenXRHandFlags::Left, ControllerDelegate::Button::BUTTON_APP, true }
+            },
+            std::vector<OpenXRAxis> {
+                    { OpenXRAxisType::Thumbstick, kPathThumbstick, OpenXRHandFlags::Both },
+            },
+            std::vector<OpenXRHaptic> {
+                    { kPathHaptic, OpenXRHandFlags::Both },
+            },
+    };
+
     const OpenXRInputMapping MagicLeap2 {
             "/interaction_profiles/ml/ml2_controller",
             "",
@@ -525,8 +554,8 @@ namespace crow {
             },
     };
 
-    const std::array<OpenXRInputMapping, 17> OpenXRInputMappings {
-            OculusTouch, OculusTouch2, MetaQuestTouchPro, Pico4U, Pico4x, PicoNeo3, PfdmYVR1, PfdmYVR2, PfdmMR, Hvr6DOF, Hvr3DOF, LenovoVRX, MagicLeap2, MetaTouchPlus, HandInteraction, MSFTHandInteraction, KHRSimple
+    const std::array<OpenXRInputMapping, 18> OpenXRInputMappings {
+            OculusTouch, OculusTouch2, MetaQuestTouchPro, Pico4U, Pico4x, PicoNeo3, PfdmYVR1, PfdmYVR2, PfdmMR, Hvr6DOF, Hvr3DOF, LenovoVRX, ViveXRElite, MagicLeap2, MetaTouchPlus, HandInteraction, MSFTHandInteraction, KHRSimple
     };
 
 } // namespace crow

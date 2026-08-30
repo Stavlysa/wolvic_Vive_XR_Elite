@@ -454,6 +454,10 @@ class DisplayOptionsView extends SettingsView {
         mBinding.windowsSize.setOnCheckedChangeListener(mWindowsSizeChangeListener);
 
         SettingsStore.getInstance(getContext()).setWindowSizePreset(checkedId);
+        if (doApply) {
+            SettingsStore.WindowSizePreset preset = SettingsStore.WindowSizePreset.values()[checkedId];
+            mWidgetManager.getWindows().applyWindowSizePreset(preset.width, preset.height);
+        }
     }
 
     private boolean setDisplayDensity(float newDensity) {

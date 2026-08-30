@@ -221,6 +221,7 @@ struct BrowserWorld::State {
   TrackedKeyboardRendererPtr trackedKeyboardRenderer;
   float selectThreshold;
   std::optional<vrb::Quaternion> windowInitialOrientation;
+  std::optional<vrb::Matrix> windowInitialReorientTransform;
   std::optional<vrb::Quaternion> previousWindowRelativeRotation;
   std::chrono::steady_clock::time_point lastTimeWindowDistanceComputation;
 
@@ -299,7 +300,15 @@ BrowserWorld::State::CheckBackButton() {
       }
 
     if (wasGoBackButtonClicked(controller, externalVR->IsPresenting())) {
+#if defined(WAVEVR)
+          // Exit WebXR directly on the render thread. Routing the Wave Menu
+          // button through an Android synthetic Back event is unreliable when
+          // the immersive page owns input focus.
+          exitImmersiveRequested = true;
+          VRB_LOG("Controller Menu requested immersive exit");
+#else
           SimulateBack();
+#endif
           webXRInterstialState = WebXRInterstialState::HIDDEN;
       } else if (webXRInterstialState == WebXRInterstialState::ALLOW_DISMISS
                  && controller.lastButtonState && controller.buttonState == 0) {
@@ -1225,10 +1234,13 @@ BrowserWorld::StartFrame() {
     }
   }
 
-#if defined(OCULUSVR)
-#if defined(STORE_BUILD)
+#if defined(OCULUSVR) && defined(STORE_BUILD)
   ProcessOVRPlatformEvents();
 #endif
+#if defined(OCULUSVR) || defined(VIVEXR) || defined(WAVEVR)
+  // VIVE's runtime queues reference-space changes when the user recenters.
+  // Polling only during session creation leaves those events unread and makes
+  // recentering depend entirely on the local-to-stage jump fallback.
   m.device->ProcessEvents();
 #endif
   m.context->Update();
@@ -1260,11 +1272,13 @@ BrowserWorld::StartFrame() {
       OnReorient();
       auto reorientTransform = m.lockMode == LockMode::HEAD ? m.device->GetHeadTransform() : GetActiveControllerOrientation();
       if (m.lockMode == LockMode::CONTROLLER) {
-        if (!m.windowInitialOrientation)
+        if (!m.windowInitialOrientation) {
           m.windowInitialOrientation = vrb::Quaternion(reorientTransform);
+          m.windowInitialReorientTransform = m.device->GetReorientTransform();
+        }
         Quaternion reorientQuaternion(reorientTransform);
         Quaternion relativeRotation = reorientQuaternion.Inverse() * *m.windowInitialOrientation;
-        // Use SLERP to interpolate the current relative rotation with the previous one to smooth out sudden jumps
+        // Smooth the relative controller rotation to avoid sudden jumps.
         if (m.previousWindowRelativeRotation)
           relativeRotation = vrb::Quaternion::Slerp(*m.previousWindowRelativeRotation,relativeRotation, 0.25f);
 
@@ -1275,6 +1289,13 @@ BrowserWorld::StartFrame() {
         ThrottledWindowDistanceComputation(reorientTransform);
       }
       m.device->Reorient(reorientTransform, m.lockMode == LockMode::HEAD ? DeviceDelegate::ReorientMode::SIX_DOF : DeviceDelegate::ReorientMode::NO_ROLL);
+      if (m.lockMode == LockMode::CONTROLLER && m.windowInitialReorientTransform) {
+        // Reorient() returns an absolute transform. Make controller movement
+        // relative to the window's transform at grab time so the first frame
+        // does not snap back to the OpenXR world's zero-yaw direction.
+        m.device->SetReorientTransform(
+            m.windowInitialReorientTransform->PostMultiply(m.device->GetReorientTransform()));
+      }
     } else {
         m.previousWindowRelativeRotation.reset();
     }
@@ -1351,8 +1372,20 @@ BrowserWorld::TogglePassthrough() {
 void
 BrowserWorld::SetLockMode(LockMode lockMode) {
   ASSERT_ON_RENDER_THREAD();
+  // Controller lock is used by the browser's lower drag handle. Each drag
+  // must establish a fresh controller baseline; otherwise a previous drag's
+  // orientation is reused and the window jumps as soon as it is grabbed. A
+  // repeated CONTROLLER command is also treated as a new drag because Wave
+  // can consume the preceding pointer-up while handling a system event.
+  if (m.lockMode == LockMode::CONTROLLER || lockMode == LockMode::CONTROLLER) {
+    m.windowInitialOrientation.reset();
+    m.windowInitialReorientTransform.reset();
+    m.previousWindowRelativeRotation.reset();
+    m.lockModeLastPosition.reset();
+  }
   if (m.lockMode == lockMode)
       return;
+
   m.lockMode = lockMode;
 }
 
@@ -1937,37 +1970,77 @@ BrowserWorld::TickImmersive() {
   m.device->SetImmersiveXRSessionType(m.externalVR->GetImmersiveXRSessionType());
 
   const bool supportsFrameAhead = m.device->SupportsFramePrediction(DeviceDelegate::FramePrediction::ONE_FRAME_AHEAD);
+#if defined(VIVEXR)
+  const bool useFrameAhead =
+      supportsFrameAhead &&
+      m.externalVR->GetVRState() == ExternalVR::VRState::Rendering &&
+      m.webXRInterstialState == WebXRInterstialState::HIDDEN;
+  const auto framePrediction = useFrameAhead
+                                   ? DeviceDelegate::FramePrediction::ONE_FRAME_AHEAD
+                                   : DeviceDelegate::FramePrediction::NO_FRAME_AHEAD;
+
+  // Let xrWaitFrame establish the runtime cadence before waiting for Gecko.
+  // This overlaps Gecko's previous RAF with the OpenXR wait and makes the
+  // freshly predicted pose available before the short VIVE browser-frame
+  // wait, instead of adding another display interval to the content pipeline.
+  m.device->StartFrame(framePrediction);
+  if (m.webXRInterstialState != WebXRInterstialState::HIDDEN) {
+      // Hide controller input until the interstitial is hidden.
+      m.ClearWebXRControllerData();
+  }
+  const uint64_t inputFrameId =
+      m.externalVR->PushFramePoses(m.device->GetHeadTransform(), m.controllers->GetControllers(),
+                                   m.context->GetTimestamp());
+  m.device->RecordImmersiveFramePose(inputFrameId);
+#else
   auto framePrediction = DeviceDelegate::FramePrediction::ONE_FRAME_AHEAD;
-  if (!supportsFrameAhead || (m.externalVR->GetVRState() != ExternalVR::VRState::Rendering) || m.webXRInterstialState != WebXRInterstialState::HIDDEN) {
-      // Do not use one frame ahead prediction if not supported or we are rendering the spinner.
+  if (!supportsFrameAhead ||
+      m.externalVR->GetVRState() != ExternalVR::VRState::Rendering ||
+      m.webXRInterstialState != WebXRInterstialState::HIDDEN) {
+      // Keep the established ordering on other runtimes.
       framePrediction = DeviceDelegate::FramePrediction::NO_FRAME_AHEAD;
       m.device->StartFrame(framePrediction);
       if (m.webXRInterstialState != WebXRInterstialState::HIDDEN) {
-          // Hide controller input until the interstitial is hidden.
           m.ClearWebXRControllerData();
       }
       m.externalVR->PushFramePoses(m.device->GetHeadTransform(), m.controllers->GetControllers(),
                                    m.context->GetTimestamp());
   }
+#endif
+
   int32_t surfaceHandle, textureWidth, textureHeight = 0;
+  uint64_t renderedInputFrameId = 0;
   device::EyeRect leftEye, rightEye;
-  bool aDiscardFrame = !m.externalVR->WaitFrameResult();
-  m.externalVR->GetFrameResult(surfaceHandle, textureWidth, textureHeight, leftEye, rightEye);
+#if defined(VIVEXR)
+  const uint64_t previousFrameId = m.externalVR->GetFrameId();
+#endif
+  const bool frameWaitSucceeded = m.externalVR->WaitFrameResult();
+#if defined(VIVEXR)
+  const bool hasFreshGeckoFrame =
+      frameWaitSucceeded && m.externalVR->GetFrameId() != previousFrameId;
+#endif
+  bool aDiscardFrame = !frameWaitSucceeded;
+  m.externalVR->GetFrameResult(surfaceHandle, textureWidth, textureHeight, renderedInputFrameId,
+                               leftEye, rightEye);
   ExternalVR::VRState state = m.externalVR->GetVRState();
+#if defined(VIVEXR)
+  if (supportsFrameAhead && !useFrameAhead) {
+      // Render the spinner for one transition frame before switching to
+      // one-frame-ahead prediction on the next iteration.
+      state = ExternalVR::VRState::Loading;
+  }
+#else
   if (supportsFrameAhead) {
       if (framePrediction != DeviceDelegate::FramePrediction::ONE_FRAME_AHEAD) {
-          // StartFrame() has been already called to render the spinner, do not call it again.
-          // Instead, repeat the XR frame and render the spinner while we transition
-          // to one frame ahead prediction.
           state = ExternalVR::VRState::Loading;
       } else {
-          // Predict poses for one frame ahead and push the data to shmem so Gecko
-          // can start the next XR RAF ASAP.
           m.device->StartFrame(framePrediction);
       }
       m.externalVR->PushFramePoses(m.device->GetHeadTransform(), m.controllers->GetControllers(),
-              m.context->GetTimestamp());
+                                   m.context->GetTimestamp());
   }
+#endif
+  m.device->SelectImmersiveFramePose(renderedInputFrameId);
   // DeviceDelegate::StartFrame() might have failed and then we should discard the frame.
   aDiscardFrame = aDiscardFrame || !m.device->ShouldRender();
 
@@ -1992,13 +2065,35 @@ BrowserWorld::TickImmersive() {
     }
     m.frameEndHandler = [=]() {
       m.device->EndFrame(aDiscardFrame ? DeviceDelegate::FrameEndMode::DISCARD : DeviceDelegate::FrameEndMode::APPLY);
+#if defined(VIVEXR)
+      if (hasFreshGeckoFrame && aDiscardFrame && surfaceHandle != 0) {
+        // A Gecko single-buffer SurfaceTexture must still be consumed and
+        // released when OpenXR cannot render this iteration.
+        m.blitter->CancelFrame(surfaceHandle);
+      } else {
+        m.blitter->EndFrame();
+      }
+      if (hasFreshGeckoFrame) {
+        // ACK only after xrEndFrame and ReleaseTexImage/CancelFrame return.
+        m.externalVR->CompleteFrameResult(surfaceHandle != 0);
+      }
+#else
       m.blitter->EndFrame();
+#endif
     };
   } else {
     if (surfaceHandle != 0) {
       m.blitter->CancelFrame(surfaceHandle);
     }
     TickWebXRInterstitial();
+#if defined(VIVEXR)
+    if (hasFreshGeckoFrame) {
+      m.frameEndHandler = [=]() {
+        m.device->EndFrame();
+        m.externalVR->CompleteFrameResult(surfaceHandle != 0);
+      };
+    }
+#endif
   }
 }
 

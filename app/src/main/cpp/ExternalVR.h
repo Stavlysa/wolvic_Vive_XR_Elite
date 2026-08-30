@@ -57,11 +57,13 @@ public:
   void SetCompositorEnabled(bool aEnabled);
   bool IsPresenting() const;
   VRState GetVRState() const;
-  void PushFramePoses(const vrb::Matrix& aHeadTransform, const std::vector<Controller>& aControllers, const double aTimestamp);
+  uint64_t PushFramePoses(const vrb::Matrix& aHeadTransform, const std::vector<Controller>& aControllers, const double aTimestamp);
   bool WaitFrameResult();
+  void CompleteFrameResult(bool aSuccessful);
   void GetFrameResult(int32_t& aSurfaceHandle,
                       int32_t& aTextureWidth,
                       int32_t& aTextureHeight,
+                      uint64_t& aInputFrameId,
                       device::EyeRect& aLeftEye,
                       device::EyeRect& aRightEye) const;
   void SetHapticState(ControllerContainerPtr aControllerContainer) const;

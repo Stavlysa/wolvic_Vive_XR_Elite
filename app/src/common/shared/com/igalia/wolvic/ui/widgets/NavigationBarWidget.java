@@ -661,6 +661,9 @@ public class NavigationBarWidget extends UIWidget implements WSession.Navigation
         cleanSession(aOldSession);
         setUpSession(aSession);
         mAttachedWindow.setIsFullScreen(false);
+        // A tab switch does not always emit another location callback. Keep a
+        // reload button disabled on a new tab from staying disabled afterwards.
+        updateReloadButtonState(aSession.getCurrentUri());
     }
 
     @Override
@@ -1022,6 +1025,10 @@ public class NavigationBarWidget extends UIWidget implements WSession.Navigation
             updateTrackingProtection();
         }
 
+        updateReloadButtonState(url);
+    }
+
+    private void updateReloadButtonState(@Nullable String url) {
         mBinding.navigationBarNavigation.reloadButton.setEnabled(
                 mViewModel.getCurrentContentType().getValue() != Windows.ContentType.NEW_TAB
                         && !mViewModel.getIsNativeContentVisible().getValue().get()

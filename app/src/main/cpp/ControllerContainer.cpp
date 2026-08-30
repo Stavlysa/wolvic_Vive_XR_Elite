@@ -124,7 +124,10 @@ ControllerContainer::LoadControllerModel(const int32_t aModelIndex) {
 
 void ControllerContainer::SetControllerModelTask(const int32_t aModelIndex, const vrb::LoadTask& aTask) {
   m.SetUpModelsGroup(aModelIndex);
-  m.loadTask.resize(aModelIndex + 1, aTask);
+  if (m.loadTask.size() <= static_cast<size_t>(aModelIndex)) {
+    m.loadTask.resize(static_cast<size_t>(aModelIndex) + 1);
+  }
+  m.loadTask[aModelIndex] = aTask;
 }
 
 void
@@ -321,7 +324,7 @@ ControllerContainer::CreateController(const int32_t aControllerIndex, const int3
   controller.pointer->SetVisible(true);
 
   if (aControllerIndex != m.gazeIndex) {
-    if ((m.models.size() >= aModelIndex) && m.models[aModelIndex]) {
+    if (m.models.size() > static_cast<size_t>(aModelIndex) && m.models[aModelIndex]) {
       controller.modelToggle = vrb::Toggle::Create(create);
       controller.modelToggle->AddNode(m.models[aModelIndex]);
       controller.transform->AddNode(controller.modelToggle);
@@ -339,7 +342,7 @@ ControllerContainer::CreateController(const int32_t aControllerIndex, const int3
 
       // If the model is not yet loaded we trigger the load task
       if (m.models[aModelIndex]->GetNodeCount() == 0  &&
-          m.loadTask.size() > aControllerIndex + 1 && m.loadTask[aModelIndex]) {
+          m.loadTask.size() > static_cast<size_t>(aModelIndex) && m.loadTask[aModelIndex]) {
         m.loader->LoadModel(m.loadTask[aModelIndex], m.models[aModelIndex]);
       }
     } else {

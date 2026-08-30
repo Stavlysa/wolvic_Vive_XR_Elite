@@ -52,7 +52,6 @@ public class AddonOptionsPermissionsView extends RecyclerView.ViewHolder impleme
             v.requestFocusFromTouch();
             return false;
         });
-        mBinding.permissionsList.addOnScrollListener(mScrollListener);
         mBinding.permissionsList.setHasFixedSize(true);
         mBinding.permissionsList.setItemViewCacheSize(20);
         // Drawing Cache is deprecated in API level 28: https://developer.android.com/reference/android/view/View#getDrawingCache()
@@ -89,17 +88,6 @@ public class AddonOptionsPermissionsView extends RecyclerView.ViewHolder impleme
     public void unbind() {
         mWidgetManager.getServicesProvider().getAddons().removeListener(this);
     }
-
-    protected RecyclerView.OnScrollListener mScrollListener = new RecyclerView.OnScrollListener() {
-        @Override
-        public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
-            super.onScrolled(recyclerView, dx, dy);
-
-            if (recyclerView.getScrollState() != RecyclerView.SCROLL_STATE_SETTLING) {
-                recyclerView.requestFocus();
-            }
-        }
-    };
 
     @Override
     public void onAddonsUpdated() {

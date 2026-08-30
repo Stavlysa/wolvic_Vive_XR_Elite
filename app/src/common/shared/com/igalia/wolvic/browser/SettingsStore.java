@@ -102,6 +102,9 @@ public class SettingsStore {
     public final static boolean UI_HARDWARE_ACCELERATION_DEFAULT = true;
     public final static boolean UI_HARDWARE_ACCELERATION_DEFAULT_MAGIC_LEAP_2 = false;
     public final static boolean PERFORMANCE_MONITOR_DEFAULT = true;
+    public final static boolean BACKGROUND_WINDOW_THROTTLING_DEFAULT = DeviceType.isWaveVR();
+    public final static boolean UPDATE_CHECK_ENABLED_DEFAULT = true;
+    public final static boolean UPDATE_INCLUDE_PRERELEASES_DEFAULT = false;
     public final static boolean DRM_PLAYBACK_DEFAULT = false;
     public final static int TRACKING_DEFAULT = WContentBlocking.EtpLevel.DEFAULT;
     public final static boolean NOTIFICATIONS_DEFAULT = true;
@@ -124,13 +127,20 @@ public class SettingsStore {
     public final static int WINDOW_WIDTH_DEFAULT = 800;
     public final static int WINDOW_HEIGHT_DEFAULT = 450;
     // The maximum size is computed so the resulting texture fits within 2560x2560.
-    public final static int MAX_WINDOW_WIDTH_DEFAULT = 1200;
+    // VIVE uses a 2x effective browser texture scale by default, so 1280
+    // logical pixels maps exactly to a 2560-pixel-wide surface.
+    private final static boolean USE_VIVE_WINDOW_PRESETS = DeviceType.isViveXR();
+    public final static int MAX_WINDOW_WIDTH_DEFAULT = USE_VIVE_WINDOW_PRESETS ? 1280 : 1200;
     public final static int MAX_WINDOW_HEIGHT_DEFAULT = 800;
     public enum WindowSizePreset {
         PRESET_0(WINDOW_WIDTH_DEFAULT, WINDOW_HEIGHT_DEFAULT),
-        PRESET_1(750, 500),
-        PRESET_2(825, 550),
-        PRESET_3(900, 600);
+        PRESET_1(USE_VIVE_WINDOW_PRESETS ? 800 : 750, 500),
+        PRESET_2(USE_VIVE_WINDOW_PRESETS ? 880 : 825, 550),
+        PRESET_3(USE_VIVE_WINDOW_PRESETS ? 960 : 900, 600),
+        PRESET_4(USE_VIVE_WINDOW_PRESETS ? 1040 : 975, 650),
+        PRESET_5(USE_VIVE_WINDOW_PRESETS ? 1120 : 1050, 700),
+        PRESET_6(USE_VIVE_WINDOW_PRESETS ? 1200 : 1125, 750),
+        PRESET_7(MAX_WINDOW_WIDTH_DEFAULT, MAX_WINDOW_HEIGHT_DEFAULT);
 
         public final int width;
         public final int height;
@@ -174,7 +184,11 @@ public class SettingsStore {
     public final static boolean AUTOPLAY_ENABLED = false;
     public final static boolean HEAD_LOCK_DEFAULT = false;
     public final static boolean OPEN_TABS_IN_BACKGROUND_DEFAULT = true;
-    public final static boolean DEBUG_LOGGING_DEFAULT = BuildConfig.DEBUG;
+    // The Wave runtime already emits high-frequency compositor diagnostics.
+    // Keep Gecko's additional console/debug stream opt-in on XR Elite even in
+    // locally signed debug builds; it can still be enabled from Developer
+    // Options when a focused capture is needed.
+    public final static boolean DEBUG_LOGGING_DEFAULT = BuildConfig.DEBUG && !DeviceType.isWaveVR();
     public final static boolean POP_UPS_BLOCKING_DEFAULT = true;
     public final static boolean WEBXR_ENABLED_DEFAULT = true;
     public final static boolean TELEMETRY_STATUS_UPDATE_SENT_DEFAULT = false;
@@ -210,6 +224,19 @@ public class SettingsStore {
     public SettingsStore(Context aContext) {
         mContext = aContext;
         mPrefs = PreferenceManager.getDefaultSharedPreferences(aContext);
+
+        // Stage 53 changes the Wave release default to remote debugging off. Apply this once so
+        // profiles upgraded from a debug build do not silently keep the Gecko debugger socket
+        // alive. The migration marker preserves any later explicit user choice.
+        if (DeviceType.isWaveVR() && !BuildConfig.DEBUG) {
+            String migrationKey = mContext.getString(R.string.settings_key_wave_release_remote_debugging_migrated);
+            if (!mPrefs.getBoolean(migrationKey, false)) {
+                mPrefs.edit()
+                        .putBoolean(mContext.getString(R.string.settings_key_remote_debugging), false)
+                        .putBoolean(migrationKey, true)
+                        .apply();
+            }
+        }
     }
 
     public void initModel(@NonNull Context context) {
@@ -385,6 +412,47 @@ public class SettingsStore {
         SharedPreferences.Editor editor = mPrefs.edit();
         editor.putBoolean(mContext.getString(R.string.settings_key_remote_debugging), isEnabled);
         editor.apply();
+    }
+
+    public boolean isBackgroundWindowThrottlingEnabled() {
+        return mPrefs.getBoolean(
+                mContext.getString(R.string.settings_key_background_window_throttling),
+                BACKGROUND_WINDOW_THROTTLING_DEFAULT);
+    }
+
+    public void setBackgroundWindowThrottlingEnabled(boolean isEnabled) {
+        mPrefs.edit()
+                .putBoolean(mContext.getString(R.string.settings_key_background_window_throttling), isEnabled)
+                .apply();
+    }
+
+    public boolean isUpdateCheckEnabled() {
+        return mPrefs.getBoolean(
+                mContext.getString(R.string.settings_key_update_check_enabled),
+                UPDATE_CHECK_ENABLED_DEFAULT);
+    }
+
+    public void setUpdateCheckEnabled(boolean isEnabled) {
+        mPrefs.edit()
+                .putBoolean(mContext.getString(R.string.settings_key_update_check_enabled), isEnabled)
+                .apply();
+    }
+
+    public boolean isUpdateIncludePrereleasesEnabled() {
+        return mPrefs.getBoolean(
+                mContext.getString(R.string.settings_key_update_include_prereleases),
+                UPDATE_INCLUDE_PRERELEASES_DEFAULT);
+    }
+
+    public void setUpdateIncludePrereleasesEnabled(boolean isEnabled) {
+        mPrefs.edit()
+                .putBoolean(mContext.getString(R.string.settings_key_update_include_prereleases), isEnabled)
+                .putLong(mContext.getString(R.string.settings_key_update_last_check_time), 0)
+                .remove(mContext.getString(R.string.settings_key_update_cached_version_code))
+                .remove(mContext.getString(R.string.settings_key_update_cached_title))
+                .remove(mContext.getString(R.string.settings_key_update_cached_url))
+                .remove(mContext.getString(R.string.settings_key_update_cached_prerelease))
+                .apply();
     }
 
 

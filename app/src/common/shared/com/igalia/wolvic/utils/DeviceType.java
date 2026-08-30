@@ -11,7 +11,7 @@ import com.igalia.wolvic.BuildConfig;
 
 public class DeviceType {
     // These values need to match those in Device.h
-    @IntDef(value = {Unknown, OculusGo, OculusQuest, ViveFocus, ViveFocusPlus, PicoNeo2, PicoG2, PicoNeo3, OculusQuest2, HVR3DoF, HVR6DoF, Pico4x, MetaQuestPro, LynxR1, LenovoA3, LenovoVRX, MagicLeap2, MetaQuest3, VisionGlass, Pico4U, PfdmYVR1, PfdmYVR2, PfdmMR})
+    @IntDef(value = {Unknown, OculusGo, OculusQuest, ViveFocus, ViveFocusPlus, PicoNeo2, PicoG2, PicoNeo3, OculusQuest2, HVR3DoF, HVR6DoF, Pico4x, MetaQuestPro, LynxR1, LenovoA3, LenovoVRX, MagicLeap2, MetaQuest3, VisionGlass, Pico4U, PfdmYVR1, PfdmYVR2, PfdmMR, ViveXRElite})
     public @interface Type {}
     public static final int Unknown = 0;
     public static final int OculusGo = 1;
@@ -36,6 +36,7 @@ public class DeviceType {
     public static final int PfdmYVR1 = 21;
     public static final int PfdmYVR2 = 22;
     public static final int PfdmMR = 23;
+    public static final int ViveXRElite = 24;
 
     private static @Type int mType = Unknown;
     private static String mDeviceName = "Unknown Device";
@@ -59,6 +60,9 @@ public class DeviceType {
                 break;
             case ViveFocusPlus:
                 mDeviceName = "Vive Focus Plus";
+                break;
+            case ViveXRElite:
+                mDeviceName = "VIVE XR Elite";
                 break;
             case PicoNeo2:
                 mDeviceName = "Pico Neo 2";
@@ -136,6 +140,15 @@ public class DeviceType {
     
     public static boolean isPfdmXR() {
         return BuildConfig.FLAVOR_platform.toLowerCase().contains("pfdmxr");
+    }
+
+    public static boolean isViveXR() {
+        return BuildConfig.FLAVOR_platform.equalsIgnoreCase("vivexr") ||
+                BuildConfig.FLAVOR_platform.equalsIgnoreCase("wavevr");
+    }
+
+    public static boolean isWaveVR() {
+        return BuildConfig.FLAVOR_platform.equalsIgnoreCase("wavevr");
     }
 
     public static String getDeviceTypeId() {

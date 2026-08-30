@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Increase the physical browser panel size on VIVE XR Elite by 25%.
+         Browser render density is configured separately in app/build.gradle. -->
+    <item name="window_world_width" format="float" type="dimen">5.0</item>
+
+    <!-- Lower the status/tool tray by 20 cm so it does not crowd the enlarged
+         browser panel. -->
+    <item name="tray_world_y" format="float" type="dimen">0.05</item>
+
+    <!-- Keep the VIVE keyboard aligned below the lowered tray and make the
+         physical keyboard about 20% larger for easier controller input.
+         The VIVE-specific default is 15 cm lower than the previous position. -->
+    <item name="keyboard_world_width" format="float" type="dimen">3.90</item>
+    <item name="keyboard_world_extra_row_width" format="float" type="dimen">4.116</item>
+    <item name="keyboard_y" format="float" type="dimen">-0.70</item>
+    <item name="keyboard_y_extra_row" format="float" type="dimen">-0.97</item>
+</resources>

@@ -13,12 +13,19 @@
    (uint64_t)(c7) << 8 | (uint64_t)(c8))
 
 #ifdef MOZILLA_INTERNAL_API
-#  define __STDC_WANT_LIB_EXT1__ 1
+
 // __STDC_WANT_LIB_EXT1__ required for memcpy_s
+#  ifndef __STDC_WANT_LIB_EXT1__
+#    define __STDC_WANT_LIB_EXT1__ 1
+#  endif  // __STDC_WANT_LIB_EXT1__
+
+static_assert(__STDC_WANT_LIB_EXT1__ == 1,
+              "__STDC_WANT_LIB_EXT1__ must be set");
+
 #  include <stdlib.h>
 #  include <string.h>
+#  include "mozilla/TiedFields.h"
 #  include "mozilla/TypedEnumBits.h"
-#  include "mozilla/dom/TiedFields.h"
 #  include "mozilla/gfx/2D.h"
 #  include <stddef.h>
 #  include <stdint.h>
@@ -48,8 +55,8 @@ namespace gfx {
 // and mapped files if we have both release and nightlies
 // running at the same time? Or...what if we have multiple
 // release builds running on same machine? (Bug 1563232)
-#define SHMEM_VERSION "0.0.13"
-static const int32_t kVRExternalVersion = 21;
+#define SHMEM_VERSION "0.0.12"
+static const int32_t kVRExternalVersion = 19;
 
 // We assign VR presentations to groups with a bitmask.
 // Currently, we will only display either content or chrome.
@@ -69,7 +76,6 @@ static const int kVRControllerMaxButtons = 64;
 static const int kVRControllerMaxAxis = 16;
 static const int kVRLayerMaxCount = 8;
 static const int kVRHapticsMaxCount = 32;
-static const int kVRBlendModesMaxLen = 3;
 
 #if defined(__ANDROID__)
 typedef uint64_t VRLayerTextureHandle;
@@ -177,12 +183,6 @@ enum class VRControllerType : uint8_t {
   PicoGaze,
   PicoG2,
   PicoNeo2,
-  PicoNeo3,
-  Pico4,
-  MetaQuest3,
-  MagicLeap2,
-  YvrTouch,
-  YvrTouch2,
   _end
 };
 
@@ -209,12 +209,6 @@ inline constexpr bool IsEnumCase<gfx::VRControllerType>(
     case gfx::VRControllerType::PicoGaze:
     case gfx::VRControllerType::PicoG2:
     case gfx::VRControllerType::PicoNeo2:
-    case gfx::VRControllerType::Pico4:
-    case gfx::VRControllerType::MetaQuest3:
-    case gfx::VRControllerType::MagicLeap2:
-    case gfx::VRControllerType::PicoNeo3:
-    case gfx::VRControllerType::YvrTouch:
-    case gfx::VRControllerType::YvrTouch2:
     case gfx::VRControllerType::_end:
       return true;
   }
@@ -260,16 +254,13 @@ namespace gfx {
 
 // -
 
-enum class VRDisplayBlendMode : uint8_t { _empty, Opaque, Additive, AlphaBlend };
-
-enum class ImmersiveXRSessionType : uint8_t { VR, AR };
+enum class VRDisplayBlendMode : uint8_t { Opaque, Additive, AlphaBlend };
 
 }  // namespace gfx
 template <>
 inline constexpr bool IsEnumCase<gfx::VRDisplayBlendMode>(
     const gfx::VRDisplayBlendMode raw) {
   switch (raw) {
-    case gfx::VRDisplayBlendMode::_empty:
     case gfx::VRDisplayBlendMode::Opaque:
     case gfx::VRDisplayBlendMode::Additive:
     case gfx::VRDisplayBlendMode::AlphaBlend:
@@ -482,11 +473,11 @@ struct VRDisplayState {
   //                             ('B'<<8) + 'A').
   uint64_t eightCC;
   VRDisplayCapabilityFlags capabilityFlags;
-  std::array<VRDisplayBlendMode, kVRBlendModesMaxLen> blendModes;
-  std::array<uint8_t, 5 - kVRBlendModesMaxLen + 1> _padding2;
+  VRDisplayBlendMode blendMode;
+  std::array<uint8_t, 5> _padding2;
   std::array<VRFieldOfView, VRDisplayState::NumEyes> eyeFOV;
   static_assert(std::is_pod<VRFieldOfView>::value);
-  std::array<std::array<float, 16>, VRDisplayState::NumEyes> eyeTransform;
+  std::array<Point3D_POD, VRDisplayState::NumEyes> eyeTranslation;
   static_assert(std::is_pod<Point3D_POD>::value);
   IntSize_POD eyeResolution;
   static_assert(std::is_pod<IntSize_POD>::value);
@@ -511,8 +502,8 @@ struct VRDisplayState {
 #ifdef MOZILLA_INTERNAL_API
   auto MutTiedFields() {
     return std::tie(shutdown, _padding1, minRestartInterval, displayName,
-                    eightCC, capabilityFlags, blendModes, _padding2, eyeFOV,
-                    eyeTransform, eyeResolution, nativeFramebufferScaleFactor,
+                    eightCC, capabilityFlags, blendMode, _padding2, eyeFOV,
+                    eyeTranslation, eyeResolution, nativeFramebufferScaleFactor,
                     suppressFrames, isConnected, isMounted, _padding3,
                     stageSize, sittingToStandingTransform, lastSubmittedFrameId,
                     lastSubmittedFrameSuccessful, _padding4,
@@ -528,16 +519,6 @@ struct VRDisplayState {
 #endif
 };
 static_assert(std::is_pod<VRDisplayState>::value);
-
-// https://www.w3.org/TR/webxr-hand-input-1/#skeleton-joints-section
-static const uint32_t kHandTrackingNumJoints = 25;
-struct VRHandJointData {
-  std::array<float, 16> transform;
-  float radius;
-};
-struct VRHandTrackingData {
-  std::array<VRHandJointData, kHandTrackingNumJoints> handJointData;
-};
 
 struct VRControllerState {
   std::array<char, kVRControllerNameMaxLen> controllerName;
@@ -608,11 +589,6 @@ struct VRControllerState {
 
   bool isPositionValid;
   bool isOrientationValid;
-
-#if CHROMIUM
-  bool hasHandTrackingData;
-  VRHandTrackingData handTrackingData;
-#endif
   uint16_t _padding4;
 
 #ifdef MOZILLA_INTERNAL_API
@@ -719,13 +695,8 @@ struct VRBrowserState {
   bool detectRuntimesOnly;
   bool presentationActive;
   bool navigationTransitionActive;
-#if CHROMIUM
-  bool dropFrame;
-#endif
   VRLayerState layerState[kVRLayerMaxCount];
   VRHapticState hapticState[kVRHapticsMaxCount];
-  VRDisplayBlendMode blendMode;
-  ImmersiveXRSessionType sessionType;
 
 #ifdef MOZILLA_INTERNAL_API
   void Clear() { memset(this, 0, sizeof(VRBrowserState)); }
