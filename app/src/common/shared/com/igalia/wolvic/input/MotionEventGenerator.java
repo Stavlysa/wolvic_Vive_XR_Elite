@@ -137,8 +137,9 @@ public class MotionEventGenerator {
                 device.mHoverStartWidget = null;
             }
             for (int i=0; i<devices.size(); i++) {
-                if (devices.get(i) != null && devices.get(i) != device && devices.get(i).mHoverStartWidget != null) {
-                    generateEvent(devices.get(i).mHoverStartWidget, devices.get(i), aFocused, MotionEvent.ACTION_HOVER_EXIT, true);
+                Device other = devices.valueAt(i);
+                if (other != device && other.mHoverStartWidget != null) {
+                    generateEvent(other.mHoverStartWidget, other, aFocused, MotionEvent.ACTION_HOVER_EXIT, true);
                 }
             }
             device.mTouchStartWidget = aWidget;
@@ -174,10 +175,9 @@ public class MotionEventGenerator {
     private static boolean isOtherDeviceDown(int deviceId) {
         boolean result = false;
         for (int i=0; i<devices.size(); i++) {
-            if (i != deviceId) {
-                if (devices.get(i) != null) {
-                    result |= devices.get(i).mTouchStartWidget != null;
-                }
+            Device other = devices.valueAt(i);
+            if (other.mDevice != deviceId) {
+                result |= other.mTouchStartWidget != null;
             }
         }
 

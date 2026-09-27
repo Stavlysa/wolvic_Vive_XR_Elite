@@ -1941,11 +1941,13 @@ BrowserWorld::DrawWorld(device::Eye aEye) {
     m.drawList->Draw(*camera);
   }
 
-  // Draw hand mesh if active
-  for (Controller& controller: m.controllers->GetControllers()) {
-    if (controller.enabled && controller.mode == ControllerMode::Hand)
-      m.device->DrawHandMesh(controller.index, *camera);
-  }
+  auto drawHands = [&] {
+    for (Controller& controller: m.controllers->GetControllers()) {
+      if (controller.enabled && controller.mode == ControllerMode::Hand)
+        m.device->DrawHandMesh(controller.index, *camera);
+    }
+  };
+  if (!m.device->DrawHandsAfterUI()) drawHands();
 
   // Draw tracked keyboard, if any
   if (m.trackedKeyboardRenderer != nullptr)
@@ -1960,6 +1962,8 @@ BrowserWorld::DrawWorld(device::Eye aEye) {
   m.rootTransparent->Cull(*m.cullVisitor, *m.drawList);
   m.drawList->Draw(*camera);
   VRB_GL_CHECK(glDepthMask(GL_TRUE));
+  // Wave's UI hands must not be overwritten by later transparent widgets.
+  if (m.device->DrawHandsAfterUI()) drawHands();
 }
 
 void

@@ -5,10 +5,10 @@
 
 This fork adapts [Wolvic](https://github.com/Igalia/wolvic) for the standalone
 VIVE XR Elite using HTC Wave Native SDK 5.6. The current tested build is
-**Stage 65** (`versionCode 202582032`, Wolvic `2.0`).
+**Stage 68** (`versionCode 202710517`, Wolvic `2.0`).
 
-[Download Stage 65 APK](https://github.com/Stavlysa/wolvic_Vive_XR_Elite/releases/download/vive-xr-elite-wave-stage-65/Wolvic-vivexr-stage-65-v202582032.apk)
-· [Release notes](https://github.com/Stavlysa/wolvic_Vive_XR_Elite/releases/tag/vive-xr-elite-wave-stage-65)
+[Download Stage 68 APK](https://github.com/Stavlysa/wolvic_Vive_XR_Elite/releases/download/vive-xr-elite-wave-stage-68/Wolvic-vivexr-stage-68-v202710517.apk)
+· [Release notes](https://github.com/Stavlysa/wolvic_Vive_XR_Elite/releases/tag/vive-xr-elite-wave-stage-68)
 · [Detailed VIVE build notes](VIVE_XR_ELITE.md)
 
 ## What works
@@ -23,10 +23,14 @@ VIVE XR Elite using HTC Wave Native SDK 5.6. The current tested build is
 - VIVE-specific window sizes, UI placement and joystick scrolling fixes
 - optional background-window throttling and in-app GitHub update checks
 - optional real-world passthrough behind browser windows
+- initial controller-free hand pointing, pinch selection and dragging
+- Wave-native hand models drawn in front of browser windows and toolbars
 
-The current update adds passthrough controls, corrects transparent UI compositing
-and strengthens stereo texture and frame handling. Distant immersive background
-flicker remains a known issue. See the [current changelog](docs/RELEASE_STAGE65.md).
+The current update adds passthrough controls and initial natural-hand input,
+corrects transparent UI compositing and strengthens stereo frame handling.
+Distant immersive background flicker remains a known issue. Hand input is still
+early support; Gecko does not expose the full WebXR hand-joint API, and custom
+gesture mappings are not available yet. See the [current changelog](docs/RELEASE_STAGE68.md).
 
 ## Passthrough background
 
@@ -45,7 +49,7 @@ Enable USB debugging on the headset, connect it with a USB cable and run:
 
 ```powershell
 adb devices
-adb install -r Wolvic-vivexr-stage-65-v202582032.apk
+adb install -r Wolvic-vivexr-stage-68-v202710517.apk
 ```
 
 The APK uses the normal Wolvic application ID, `com.igalia.wolvic`, so
@@ -66,8 +70,8 @@ Wolvic never downloads or installs an APK automatically.
 
 ## Source package notice
 
-The Stage 65 source is committed to this repository and its Release tag.
-`Wolvic-vivexr-stage-65-complete-source-v202582032.zip` also includes the pinned
+The Stage 68 source is committed to this repository and its Release tag.
+`Wolvic-vivexr-stage-68-complete-source-v202710517.zip` also includes the pinned
 open-source submodules. GitHub's automatic **Source code (zip/tar.gz)** archives
 omit submodule contents. Use the complete-source ZIP, or clone with:
 

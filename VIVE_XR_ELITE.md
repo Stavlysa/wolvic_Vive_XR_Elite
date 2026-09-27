@@ -3,11 +3,11 @@
 This fork contains two VIVE XR Elite platform backends:
 
 - `wavevr` is the currently tested backend. It uses HTC Wave SDK 5.6 and is the
-  backend used by the Stage 51 through Stage 65 APKs.
+  backend used by the Stage 51 through Stage 68 APKs.
 - `vivexr` is the earlier experimental backend based on the standard Android
   OpenXR loader. It remains in the tree for comparison and future work.
 
-## Current Stage 65 status
+## Current Stage 68 status
 
 The Wave build has been tested directly on a standalone VIVE XR Elite. It
 includes:
@@ -23,15 +23,20 @@ includes:
 - runtime-provided left and right controller models
 - Wave component `localMat` transforms for controller-model alignment
 - optional real-world browser background with controls in Environment
+- initial natural-hand input with pinch selection and dragging
+- device-provided Wave hand geometry and alpha texture in a foreground UI pass
 
-The current APK is Wolvic 2.0, versionCode 202582032. The latest changes add
+The current APK is Wolvic 2.0, versionCode 202710517. The latest changes add
+natural-hand input and device-provided hand models, along with
 passthrough lifecycle handling, correct UI alpha coverage, per-eye texture
 regions, guarded Wave texture indices and shader cleanup. Frame completion is
 published with the next fresh pose after surface release.
 
-See [current release notes](docs/RELEASE_STAGE65.md),
+See [current release notes](docs/RELEASE_STAGE68.md),
 [frame safeguards](docs/VIVE_STAGE63.md), [UI compositing](docs/VIVE_STAGE64.md)
-and [Environment settings](docs/VIVE_STAGE65.md).
+and [Environment settings](docs/VIVE_STAGE65.md). Hand implementation notes are
+in [Stage 66](docs/VIVE_STAGE66.md), [Stage 67](docs/VIVE_STAGE67.md) and
+[Stage 68](docs/VIVE_STAGE68.md). Custom gesture mappings are not implemented.
 
 Stage 52 additionally uses an optimized release build, keeps Wave debug logging
 opt-in, and avoids installing the debug session-store observer unless verbose

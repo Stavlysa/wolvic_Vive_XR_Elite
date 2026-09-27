@@ -391,7 +391,7 @@ HandMeshRendererSkinned::~HandMeshRendererSkinned() {
         VRB_GL_CHECK(glDeleteShader(m.vertexShader));
         m.vertexShader = 0;
     }
-    if (m.vertexShader) {
+    if (m.fragmentShader) {
         VRB_GL_CHECK(glDeleteShader(m.fragmentShader));
         m.fragmentShader = 0;
     }

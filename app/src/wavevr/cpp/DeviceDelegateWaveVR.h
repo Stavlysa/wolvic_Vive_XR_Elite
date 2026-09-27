@@ -39,6 +39,13 @@ public:
   void EndFrame(const FrameEndMode aMode) override;
   bool IsPassthroughEnabled() const override;
   void TogglePassthroughEnabled() override;
+  void SetHandTrackingEnabled(bool aEnabled) override;
+  int32_t GetHandTrackingJointIndex(HandTrackingJoints aJoint) override;
+  void UpdateHandMesh(uint32_t aIndex, const std::vector<vrb::Matrix>& aJoints,
+      const vrb::GroupPtr& aRoot, bool aEnabled, bool aLeftHanded) override;
+  void DrawHandMesh(uint32_t aIndex, const vrb::Camera& aCamera) override;
+  bool DrawHandsAfterUI() const override { return true; }
+  float GetSelectThreshold(int32_t aIndex) override;
   vrb::LoadTask GetControllerModelTask(int32_t index) override;
   // DeviceDelegateWaveVR interface
   bool IsRunning();

@@ -132,6 +132,9 @@ public:
   virtual void UpdateHandMesh(const uint32_t aControllerIndex, const std::vector<vrb::Matrix>& handJointTransforms,
                               const vrb::GroupPtr& aRoot, const bool aEnabled, const bool leftHanded) {};
   virtual void DrawHandMesh(const uint32_t aControllerIndex, const vrb::Camera&) {};
+  // UI hand representations may opt into a final foreground pass. Other
+  // devices keep their existing world-space rendering order by default.
+  virtual bool DrawHandsAfterUI() const { return false; }
   virtual void SetHitDistance(const float) {};
   enum class PointerMode {
     TRACKED_POINTER,

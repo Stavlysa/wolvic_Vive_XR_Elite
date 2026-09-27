@@ -10,6 +10,8 @@
 #include "WavePassthrough.h"
 #include "WaveFrameState.h"
 #include "WaveAlphaBlend.h"
+#include "WaveHandTracking.h"
+#include "WaveHandMesh.h"
 #include "VRBrowser.h"
 
 #include "vrb/CameraEye.h"
@@ -121,6 +123,11 @@ struct DeviceDelegateWaveVR::State {
   bool suspended = false;
   bool systemPassthrough = false;
   bool passthroughThisFrame = false;
+  WaveHandTracking handTracking;
+  std::unique_ptr<WaveHandMesh> handRenderer;
+  bool handTrackingEnabled = true;
+  bool usingHands = false;
+  std::array<bool, 2> handEnabled{}, handSelect{};
   std::mutex mCachedDataMutex[2];
   State()
       : isRunning(true)
@@ -333,6 +340,8 @@ struct DeviceDelegateWaveVR::State {
   }
 
   void Shutdown() {
+    handTracking.Stop();
+    handRenderer.reset();
     passthrough.Shutdown();
     ReleaseTextureQueues();
   }
@@ -386,12 +395,102 @@ struct DeviceDelegateWaveVR::State {
     aController.enabled = false;
   }
 
+  void UpdateHands(const vrb::Matrix& head) {
+    if (!delegate) return;
+    const bool active = usingHands && !paused && !suspended && !WVR_IsInputFocusCapturedBySystem();
+    const bool gotData = handTracking.Update(active);
+    for (int hand = 0; hand < 2; ++hand) {
+      const int index = kMaxControllerCount + hand;
+      const bool valid = gotData && handTracking.Valid(hand);
+      const bool pinched = handTracking.Pinched(hand) && valid;
+      if (!valid) {
+        delegate->SetButtonState(index, ControllerDelegate::BUTTON_TRIGGER, device::kImmersiveButtonTrigger, false, false, 0);
+        delegate->SetButtonState(index, ControllerDelegate::BUTTON_APP, -1, false, false, 0);
+        if (handSelect[hand]) delegate->SetSelectActionStop(index);
+        // Give the UI one final released frame at the last valid ray before
+        // hiding the input source, so a drag cannot remain held forever.
+        delegate->SetEnabled(index, handSelect[hand]);
+        delegate->SetMode(index, handSelect[hand] ? ControllerMode::Hand : ControllerMode::None);
+        delegate->SetHandActionEnabled(index, false);
+        handSelect[hand] = false;
+        if (handEnabled[hand]) VRB_LOG("Wave hand %d tracking lost", hand);
+        handEnabled[hand] = false;
+        continue;
+      }
+      if (!handEnabled[hand]) VRB_LOG("Wave hand %d tracking active", hand);
+      handEnabled[hand] = true;
+      const bool left = hand == 1;
+      std::vector<vrb::Matrix> joints(26);
+      std::vector<float> radii(26, .008f);
+      for (int joint = 0; joint < 26; ++joint) {
+        const auto& p = handTracking.Joint(hand, joint);
+        const auto& q = p.rotation;
+        joints[joint] = handTracking.HasRotation(joint) ?
+            vrb::Matrix::Rotation(vrb::Quaternion(q.x, q.y, q.z, q.w).Normalize()) : vrb::Matrix::Identity();
+        vrb::Vector position(p.position.v[0], p.position.v[1], p.position.v[2]);
+        if (renderMode == device::RenderMode::StandAlone) position += kAverageHeight;
+        joints[joint].TranslateInPlace(position);
+      }
+      const auto& p = handTracking.Pose(hand);
+      bool hasAim = p.base.type == WVR_HandPoseType_Pinch;
+      vrb::Matrix aim = vrb::Matrix::Identity();
+      if (hasAim) {
+        const auto& origin = p.pinch.origin;
+        const auto& direction = p.pinch.direction;
+        vrb::Vector ray(direction.v[0], direction.v[1], direction.v[2]);
+        hasAim = std::isfinite(ray.x()) && std::isfinite(ray.y()) && std::isfinite(ray.z()) &&
+            ray.Magnitude() > .001f && std::isfinite(origin.v[0]) &&
+            std::isfinite(origin.v[1]) && std::isfinite(origin.v[2]);
+        if (hasAim) {
+          // Wolvic's ray travels along local -Z; Wave supplies the forward direction.
+          const vrb::Vector up = std::fabs(ray.Normalize().y()) > .95f ? vrb::Vector(0,0,1) : vrb::Vector(0,1,0);
+          aim = vrb::Matrix::Rotation(-ray, up);
+          vrb::Vector position(origin.v[0], origin.v[1], origin.v[2]);
+          if (renderMode == device::RenderMode::StandAlone) position += kAverageHeight;
+          aim.TranslateInPlace(position);
+        }
+      }
+      const vrb::Vector wrist = joints[1].GetTranslation();
+      const vrb::Vector indexBase = joints[6].GetTranslation() - wrist;
+      const vrb::Vector littleBase = joints[21].GetTranslation() - wrist;
+      const vrb::Vector toHead = head.GetTranslation() - wrist;
+      const vrb::Vector normal = indexBase.Cross(littleBase);
+      // Left palm towards the face: show the existing back/exit-WebXR button.
+      // Restrict to an upright palm; an ordinary downward pinch stays a click.
+      const bool menu = left && normal.Magnitude() > .00001f && toHead.Magnitude() > .01f &&
+          normal.Normalize().Dot(toHead.Normalize()) > .8f && indexBase.Normalize().y() > .6f;
+      const bool trigger = pinched && hasAim && !menu;
+      delegate->SetEnabled(index, true);
+      delegate->SetMode(index, ControllerMode::Hand);
+      delegate->SetAimEnabled(index, hasAim && !menu);
+      delegate->SetHandJointLocations(index, std::move(joints), std::move(radii));
+      delegate->SetHandActionEnabled(index, menu);
+      delegate->SetSelectFactor(index, handTracking.Strength(hand));
+      delegate->SetButtonState(index, ControllerDelegate::BUTTON_APP, -1, pinched && menu, pinched && menu, 0);
+      delegate->SetButtonState(index, ControllerDelegate::BUTTON_TRIGGER, device::kImmersiveButtonTrigger,
+          trigger, handTracking.Strength(hand) > 0 && !menu, menu ? 0 : handTracking.Strength(hand));
+      if (trigger != handSelect[hand] && renderMode == device::RenderMode::Immersive) {
+        if (trigger) delegate->SetSelectActionStart(index);
+        else delegate->SetSelectActionStop(index);
+      }
+      handSelect[hand] = trigger;
+      if (hasAim) {
+        delegate->SetTransform(index, aim);
+        delegate->SetBeamTransform(index, vrb::Matrix::Identity());
+        delegate->SetImmersiveBeamTransform(index, vrb::Matrix::Identity());
+      }
+    }
+  }
+
   void UpdateControllers() {
     if (!delegate) {
       return;
     }
 
-    if (WVR_IsInputFocusCapturedBySystem()) {
+    usingHands = handTrackingEnabled && (WVR_GetInteractionMode() == WVR_InteractionMode_Hand ||
+        (!WVR_IsDeviceConnected(WVR_DeviceType_Controller_Right) &&
+         !WVR_IsDeviceConnected(WVR_DeviceType_Controller_Left)));
+    if (usingHands || paused || suspended || WVR_IsInputFocusCapturedBySystem()) {
       for (Controller& controller: controllers) {
         if (controller.enabled) {
           delegate->SetEnabled(controller.index, false);
@@ -634,12 +733,45 @@ DeviceDelegateWaveVR::Create(vrb::RenderContextPtr& aContext) {
 void DeviceDelegateWaveVR::InitializeRender() {
   m.InitializeRender();
   m.passthrough.Initialize();
+  const bool supported = m.handTracking.Initialize();
+  VRBrowser::SetHandTrackingSupported(supported);
+  VRB_LOG("Wave natural hand tracking supported=%d", supported);
+  if (supported && !m.handRenderer) {
+    m.handRenderer = std::make_unique<WaveHandMesh>();
+  }
 }
 
 void DeviceDelegateWaveVR::SetPaused(bool aPaused) {
   const bool resumed = m.paused && !aPaused;
   m.paused = aPaused;
+  if (aPaused) m.handTracking.Stop();
   UpdatePassthrough(resumed);
+}
+
+void DeviceDelegateWaveVR::SetHandTrackingEnabled(bool aEnabled) {
+  m.handTrackingEnabled = aEnabled;
+  if (!aEnabled) m.handTracking.Stop();
+}
+
+int32_t DeviceDelegateWaveVR::GetHandTrackingJointIndex(HandTrackingJoints aJoint) {
+  return static_cast<int32_t>(aJoint);
+}
+
+float DeviceDelegateWaveVR::GetSelectThreshold(int32_t aIndex) {
+  return aIndex >= kMaxControllerCount ? .7f : 1.f;
+}
+
+void DeviceDelegateWaveVR::UpdateHandMesh(uint32_t aIndex, const std::vector<vrb::Matrix>& aJoints,
+    const vrb::GroupPtr& aRoot, bool aEnabled, bool aLeftHanded) {
+  if (!m.handRenderer || aIndex < kMaxControllerCount || aIndex >= kMaxControllerCount + 2) return;
+  const int hand = aIndex - kMaxControllerCount;
+  m.handRenderer->Update(hand, aJoints, m.handTracking.Hand(hand).scale, aEnabled);
+}
+
+void DeviceDelegateWaveVR::DrawHandMesh(uint32_t aIndex, const vrb::Camera& aCamera) {
+  if (!m.handRenderer || aIndex < kMaxControllerCount || aIndex >= kMaxControllerCount + 2) return;
+  m.handRenderer->Draw(aIndex - kMaxControllerCount, aCamera);
+  SetWaveSceneAlphaBlend();
 }
 
 void DeviceDelegateWaveVR::UpdatePassthrough(bool aForce) {
@@ -797,6 +929,17 @@ DeviceDelegateWaveVR::SetControllerDelegate(ControllerDelegatePtr& aController) 
   for (State::Controller& controller: m.controllers) {
     VRB_LOG("Creating controller from SetControllerDelegate");
     m.CreateController(controller);
+  }
+  for (int hand = 0; hand < 2; ++hand) {
+    const int index = kMaxControllerCount + hand;
+    m.delegate->CreateController(index, 0, "VIVE XR Elite Hand", vrb::Matrix::Identity());
+    m.delegate->SetLeftHanded(index, hand == 1);
+    m.delegate->SetCapabilityFlags(index, device::Orientation | device::Position | device::GripSpacePosition);
+    m.delegate->SetControllerType(index, device::ViveXRElite);
+    m.delegate->SetTargetRayMode(index, device::TargetRayMode::TrackedPointer);
+    m.delegate->SetButtonCount(index, 1);
+    m.delegate->SetHapticCount(index, 0);
+    m.delegate->SetEnabled(index, false);
   }
 }
 
@@ -1053,6 +1196,9 @@ DeviceDelegateWaveVR::StartFrame(const FramePrediction aPrediction) {
   if (!m.delegate) {
     return;
   }
+  // Fetch natural hand data immediately after the synchronized Wave pose and
+  // publish it in exactly the same origin/height space as the head and UI.
+  m.UpdateHands(hmd);
   for (uint32_t id = WVR_DEVICE_HMD + 1; id < WVR_DEVICE_COUNT_LEVEL_1; id++) {
     if ((m.devicePairs[id].type != WVR_DeviceType_Controller_Right) &&
         (m.devicePairs[id].type != WVR_DeviceType_Controller_Left)) {
