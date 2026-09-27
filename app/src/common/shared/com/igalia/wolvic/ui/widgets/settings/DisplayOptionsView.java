@@ -90,15 +90,6 @@ class DisplayOptionsView extends SettingsView {
         mBinding.autoplaySwitch.setOnCheckedChangeListener(mAutoplayListener);
         setAutoplay(SettingsStore.getInstance(getContext()).isAutoplayEnabled(), false);
 
-        mBinding.startWithPassthroughSwitch.setOnCheckedChangeListener(mStartWithPassthroughListener);
-        setStartWithPassthrough(SettingsStore.getInstance(getContext()).isStartWithPassthroughEnabled());
-
-        if (mWidgetManager != null && mWidgetManager.isPassthroughSupported()) {
-            mBinding.startWithPassthroughSwitch.setVisibility(View.VISIBLE);
-        } else {
-            mBinding.startWithPassthroughSwitch.setVisibility(View.GONE);
-        }
-
         mBinding.latinAutoCompleteSwitch.setOnCheckedChangeListener(mLatinAutoCompleteListener);
         setLatinAutoComplete(SettingsStore.getInstance(getContext()).isLatinAutoCompleteEnabled(), false);
 
@@ -187,10 +178,6 @@ class DisplayOptionsView extends SettingsView {
 
     private SwitchSetting.OnCheckedChangeListener mAutoplayListener = (compoundButton, enabled, apply) -> {
         setAutoplay(enabled, true);
-    };
-
-    private SwitchSetting.OnCheckedChangeListener mStartWithPassthroughListener = (compoundButton, value, doApply) -> {
-        setStartWithPassthrough(value);
     };
 
     private SwitchSetting.OnCheckedChangeListener mLatinAutoCompleteListener = (compoundButton, enabled, apply) -> {
@@ -294,10 +281,6 @@ class DisplayOptionsView extends SettingsView {
         setLatinAutoComplete(SettingsStore.LATIN_AUTO_COMPLETE_ENABLED, true);
         setCenterWindows(SettingsStore.CENTER_WINDOWS_DEFAULT, true);
 
-        if (mBinding.startWithPassthroughSwitch.isChecked() != SettingsStore.shouldStartWithPassthrougEnabled()) {
-            setStartWithPassthrough(SettingsStore.shouldStartWithPassthrougEnabled());
-        }
-
         if (restart) {
             showRestartDialog(() -> {
                 setMSAAMode(mBinding.msaaRadio.getIdForValue(prevMSAA), true);
@@ -338,14 +321,6 @@ class DisplayOptionsView extends SettingsView {
         if (doApply) {
             SettingsStore.getInstance(getContext()).setAutoplayEnabled(value);
         }
-    }
-
-    private void setStartWithPassthrough(boolean value) {
-        mBinding.startWithPassthroughSwitch.setOnCheckedChangeListener(null);
-        mBinding.startWithPassthroughSwitch.setValue(value, false);
-        mBinding.startWithPassthroughSwitch.setOnCheckedChangeListener(mStartWithPassthroughListener);
-
-        SettingsStore.getInstance(getContext()).setStartWithPassthroughEnabled(value);
     }
 
     private void setLatinAutoComplete(boolean value, boolean doApply) {

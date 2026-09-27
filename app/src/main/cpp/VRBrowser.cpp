@@ -103,6 +103,7 @@ jmethodID sRenderPointerLayer = nullptr;
 jmethodID sGetStorageAbsolutePath = nullptr;
 jmethodID sIsOverrideEnvPathEnabled = nullptr;
 jmethodID sCheckTogglePassthrough = nullptr;
+jmethodID sOnPassthroughError = nullptr;
 jmethodID sResetWindowsPosition = nullptr;
 jmethodID sGetActiveEnvironment = nullptr;
 jmethodID sGetPointerColor = nullptr;
@@ -158,6 +159,7 @@ VRBrowser::InitializeJava(JNIEnv* aEnv, jobject aActivity) {
   sGetStorageAbsolutePath = FindJNIMethodID(sEnv, sBrowserClass, kGetStorageAbsolutePathName, kGetStorageAbsolutePathSignature);
   sIsOverrideEnvPathEnabled = FindJNIMethodID(sEnv, sBrowserClass, kIsOverrideEnvPathEnabledName, kIsOverrideEnvPathEnabledSignature);
   sCheckTogglePassthrough = FindJNIMethodID(sEnv, sBrowserClass, kCheckTogglePassthrough, kCheckTogglePassthroughSignature);
+  sOnPassthroughError = FindJNIMethodID(sEnv, sBrowserClass, "onPassthroughError", "()V");
   sResetWindowsPosition = FindJNIMethodID(sEnv, sBrowserClass, kResetWindowsPosition, kResetWindowsPositionSignature);
   sGetActiveEnvironment = FindJNIMethodID(sEnv, sBrowserClass, kGetActiveEnvironment, kGetActiveEnvironmentSignature);
   sGetPointerColor = FindJNIMethodID(sEnv, sBrowserClass, kGetPointerColor, kGetPointerColorSignature);
@@ -213,6 +215,7 @@ VRBrowser::ShutdownJava() {
   sGetStorageAbsolutePath = nullptr;
   sIsOverrideEnvPathEnabled = nullptr;
   sCheckTogglePassthrough = nullptr;
+  sOnPassthroughError = nullptr;
   sResetWindowsPosition = nullptr;
   sGetActiveEnvironment = nullptr;
   sGetPointerColor = nullptr;
@@ -377,6 +380,13 @@ VRBrowser::isOverrideEnvPathEnabled() {
   CheckJNIException(sEnv, __FUNCTION__);
 
   return jBool;
+}
+
+void
+VRBrowser::OnPassthroughError() {
+  if (!ValidateMethodID(sEnv, sActivity, sOnPassthroughError, __FUNCTION__)) { return; }
+  sEnv->CallVoidMethod(sActivity, sOnPassthroughError);
+  CheckJNIException(sEnv, __FUNCTION__);
 }
 
 void

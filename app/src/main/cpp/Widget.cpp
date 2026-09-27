@@ -112,6 +112,13 @@ struct Widget::State {
 
       vrb::Color tintColor = placement->GetTintColor();
       std::string customFragment;
+#if defined(WAVEVR)
+      // Wave submits the scene alpha to the passthrough compositor. Android
+      // surfaces must not have their premultiplied colors multiplied twice.
+      customFragment =
+#include "shaders/widget_surface.fs"
+      ;
+#endif
       if (!placement->composited && placement->GetClearColor().Alpha() > 0.0f) {
         customFragment =
 #include "shaders/clear_color.fs"

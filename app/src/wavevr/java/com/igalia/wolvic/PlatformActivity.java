@@ -54,6 +54,19 @@ public class PlatformActivity extends VRActivity {
         // Wave reserves the system back/menu path for its own VR shell.
     }
 
+    @Override
+    protected void onPause() {
+        queueRunnable(() -> setPassthroughPausedNative(true));
+        super.onPause();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        queueRunnable(() -> setPassthroughPausedNative(false));
+    }
+
     protected native void queueRunnable(Runnable aRunnable);
     protected native void initializeJava(AssetManager aAssets);
+    private native void setPassthroughPausedNative(boolean paused);
 }

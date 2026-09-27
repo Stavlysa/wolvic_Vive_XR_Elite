@@ -568,13 +568,11 @@ ExternalVR::PushFramePoses(const vrb::Matrix& aHeadTransform, const std::vector<
   memcpy(m.system.sensorState.pose.orientation.data(), quaternion.Data(), arraySize(m.system.sensorState.pose.orientation));
   memcpy(m.system.sensorState.pose.position.data(), translation.Data(), arraySize(m.system.sensorState.pose.position));
   m.system.sensorState.inputFrameID++;
-#if defined(VIVEXR)
-  // The VIVE OpenXR path acknowledges a single-buffer SurfaceTexture only
-  // after it has been released at the end of the XR frame.
+#if defined(VIVEXR) || defined(WAVEVR)
+  // Never acknowledge a single-buffer SurfaceTexture until it is released.
   m.system.displayState.lastSubmittedFrameId = m.lastAcknowledgedFrameId;
 #else
-  // Wave and the other legacy backends use Gecko's established immediate ACK
-  // flow. They do not retain an OpenXR swapchain image across this boundary.
+  // Keep the legacy acknowledgement flow on other backends.
   m.system.displayState.lastSubmittedFrameId = m.lastFrameId;
 #endif
 
@@ -682,7 +680,7 @@ ExternalVR::WaitFrameResult() {
     }
     if (browserFrameId != m.lastFrameId) {
       m.firstPresentingFrame = false;
-#if defined(VIVEXR)
+#if defined(VIVEXR) || defined(WAVEVR)
       if (m.frameOwned) {
         ++m.frameOwnershipViolationCount;
         VRB_WARN("VIVE XR Gecko frame ownership violation: pending=%llu incoming=%llu",
@@ -789,10 +787,12 @@ ExternalVR::CompleteFrameResult(bool aSuccessful) {
   m.frameOwned = false;
   m.frameAcquireTime = {};
 
-  // Gecko's submit thread is blocked on this signal. Sending it in the same
-  // OpenXR iteration gives the next WebXR RAF almost one extra display period
-  // compared with waiting for the next PushFramePoses call.
+  // Gecko immediately starts its next RAF on a successful ACK. Wave must
+  // publish that ACK together with the next GetSyncPose in PushFramePoses;
+  // otherwise the new RAF can use the previous frame's sensor state.
+#if !defined(WAVEVR)
   PushSystemState();
+#endif
 }
 
 void

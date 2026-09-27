@@ -5,10 +5,10 @@
 
 This fork adapts [Wolvic](https://github.com/Igalia/wolvic) for the standalone
 VIVE XR Elite using HTC Wave Native SDK 5.6. The current tested build is
-**Stage 62** (`versionCode 202150655`, Wolvic `2.0`).
+**Stage 65** (`versionCode 202582032`, Wolvic `2.0`).
 
-[Download Stage 62 APK](https://github.com/Stavlysa/wolvic_Vive_XR_Elite/releases/download/vive-xr-elite-wave-stage-62/Wolvic-vivexr-stage-62-v202150655.apk)
-· [Release notes](https://github.com/Stavlysa/wolvic_Vive_XR_Elite/releases/tag/vive-xr-elite-wave-stage-62)
+[Download Stage 65 APK](https://github.com/Stavlysa/wolvic_Vive_XR_Elite/releases/download/vive-xr-elite-wave-stage-65/Wolvic-vivexr-stage-65-v202582032.apk)
+· [Release notes](https://github.com/Stavlysa/wolvic_Vive_XR_Elite/releases/tag/vive-xr-elite-wave-stage-65)
 · [Detailed VIVE build notes](VIVE_XR_ELITE.md)
 
 ## What works
@@ -22,11 +22,22 @@ VIVE XR Elite using HTC Wave Native SDK 5.6. The current tested build is
 - runtime-provided left and right controller models
 - VIVE-specific window sizes, UI placement and joystick scrolling fixes
 - optional background-window throttling and in-app GitHub update checks
+- optional real-world passthrough behind browser windows
 
-Stage 62 reduces work in the immersive copy pass by disabling redundant MSAA
-and depth attachments while keeping 4x MSAA for the normal browser UI. A local
-Moon Rider test averaged about 87.9 fresh frames per second against an 89.8 Hz
-compositor, with no skipped or discontinuous frame reports during the sample.
+The current update adds passthrough controls, corrects transparent UI compositing
+and strengthens stereo texture and frame handling. Distant immersive background
+flicker remains a known issue. See the [current changelog](docs/RELEASE_STAGE65.md).
+
+## Passthrough background
+
+Open **Settings > Environment**:
+
+- **Passthrough background** switches the current background immediately.
+- **Start with Passthrough Mode** controls the next launch separately.
+- Selecting a virtual environment turns passthrough off for the current session.
+
+The three-dot menu retains its passthrough shortcut. Passthrough is hidden during
+opaque immersive VR and restored afterward. This does not add immersive WebXR AR.
 
 ## Install
 
@@ -34,7 +45,7 @@ Enable USB debugging on the headset, connect it with a USB cable and run:
 
 ```powershell
 adb devices
-adb install -r Wolvic-vivexr-stage-62-v202150655.apk
+adb install -r Wolvic-vivexr-stage-65-v202582032.apk
 ```
 
 The APK uses the normal Wolvic application ID, `com.igalia.wolvic`, so
@@ -55,11 +66,14 @@ Wolvic never downloads or installs an APK automatically.
 
 ## Source package notice
 
-The exact Stage 62 working source is attached to the Stage 62 Release as
-`Wolvic-vivexr-stage-62-complete-source-v202150655.zip`. Until the VIVE changes
-are migrated into the public Git branch, GitHub's automatically generated
-**Source code (zip/tar.gz)** files only reflect the tag target and are **not**
-the complete VIVE adaptation. Use the explicitly named source ZIP instead.
+The Stage 65 source is committed to this repository and its Release tag.
+`Wolvic-vivexr-stage-65-complete-source-v202582032.zip` also includes the pinned
+open-source submodules. GitHub's automatic **Source code (zip/tar.gz)** archives
+omit submodule contents. Use the complete-source ZIP, or clone with:
+
+```bash
+git clone --recurse-submodules https://github.com/Stavlysa/wolvic_Vive_XR_Elite.git
+```
 
 The source package excludes local SDKs, build outputs, signing files,
 `local.properties` and caches.

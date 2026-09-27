@@ -156,7 +156,7 @@ EngineSurfaceTexture::Create(const int32_t aHandle) {
     VRB_ERROR("EngineSurfaceTexture.lookup method missing");
     return result;
   }
-  jobject surface = sEnv->CallStaticObjectMethod(sEngineSurfaceTextureClass, sLookup, aHandle);
+  jobject surface = sEnv->CallStaticObjectMethod(sEngineSurfaceTextureClass, sLookup, static_cast<jlong>(aHandle));
   if (!surface) {
     VRB_ERROR("Unable to find EngineSurfaceTexture with handle: %d", aHandle);
     return result;

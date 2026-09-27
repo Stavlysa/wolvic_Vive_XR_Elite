@@ -38,6 +38,7 @@ void RenderPointerLayer(jobject aSurface, const int32_t color, const std::functi
 std::string GetStorageAbsolutePath(const std::string& aRelativePath);
 bool isOverrideEnvPathEnabled();
 void CheckTogglePassthrough();
+void OnPassthroughError();
 void ResetWindowsPosition();
 std::string GetActiveEnvironment();
 int32_t GetPointerColor();

@@ -7,6 +7,10 @@
 #include "DeviceUtils.h"
 #include "ElbowModel.h"
 #include "GestureDelegate.h"
+#include "WavePassthrough.h"
+#include "WaveFrameState.h"
+#include "WaveAlphaBlend.h"
+#include "VRBrowser.h"
 
 #include "vrb/CameraEye.h"
 #include "vrb/Color.h"
@@ -112,6 +116,11 @@ struct DeviceDelegateWaveVR::State {
   bool handsCalculated;
   WVR_CtrlerModel_t * modelCachedData[2];
   bool isModelDataReady[2];
+  WavePassthrough passthrough;
+  bool paused = false;
+  bool suspended = false;
+  bool systemPassthrough = false;
+  bool passthroughThisFrame = false;
   std::mutex mCachedDataMutex[2];
   State()
       : isRunning(true)
@@ -162,7 +171,10 @@ struct DeviceDelegateWaveVR::State {
     reorientMatrix = vrb::Matrix::Identity();
   }
 
-  void FillFBOQueue(void* aTextureQueue, std::vector<vrb::FBOPtr>& aFBOQueue) {
+  bool FillFBOQueue(void* aTextureQueue, std::vector<vrb::FBOPtr>& aFBOQueue) {
+    if (!aTextureQueue) {
+      return false;
+    }
     vrb::FBO::Attributes attributes;
     // Immersive WebXR is already rendered into Gecko's stereo texture.  The
     // Wave eye pass only copies that finished image with a full-screen quad,
@@ -173,16 +185,29 @@ struct DeviceDelegateWaveVR::State {
     attributes.depth = !isImmersive;
     attributes.samples = isImmersive ? 0 : 4;
     vrb::RenderContextPtr render = context.lock();
-    for (int ix = 0; ix < WVR_GetTextureQueueLength(aTextureQueue); ix++) {
+    const uint32_t length = WVR_GetTextureQueueLength(aTextureQueue);
+    if (!render || length == 0) {
+      return false;
+    }
+    for (uint32_t ix = 0; ix < length; ix++) {
       vrb::FBOPtr fbo = vrb::FBO::Create(render);
       uintptr_t handle = (uintptr_t)WVR_GetTexture(aTextureQueue, ix).id;
       fbo->SetTextureHandle((GLuint)handle, renderWidth, renderHeight, attributes);
       if (fbo->IsValid()) {
         aFBOQueue.push_back(fbo);
       } else {
-        VRB_ERROR("FAILED to make valid FBO");
+        VRB_ERROR("Failed Wave FBO at queue index %u; rejecting entire queue", ix);
+        aFBOQueue.clear();
+        return false;
       }
     }
+    return true;
+  }
+
+  bool HasValidFrameBuffers() const {
+    return leftTextureQueue && rightTextureQueue &&
+        ValidWaveStereoIndices(leftFBOIndex, rightFBOIndex, leftFBOQueue.size(), rightFBOQueue.size()) &&
+        leftFBOQueue[leftFBOIndex] && rightFBOQueue[rightFBOIndex];
   }
 
   void InitializeCameras() {
@@ -257,7 +282,7 @@ struct DeviceDelegateWaveVR::State {
 
   void CompleteImmersiveEnumerationIfReady() {
     if (!immersiveDisplay || immersiveEnumerationComplete ||
-        renderWidth == 0 || renderHeight == 0) {
+        renderWidth == 0 || renderHeight == 0 || leftFBOQueue.empty() || rightFBOQueue.empty()) {
       return;
     }
 
@@ -279,25 +304,36 @@ struct DeviceDelegateWaveVR::State {
     ReleaseTextureQueues();
     VRB_LOG("Create texture queues: %dx%d", renderWidth, renderHeight);
     leftTextureQueue = WVR_ObtainTextureQueue(WVR_TextureTarget_2D, WVR_TextureFormat_RGBA, WVR_TextureType_UnsignedByte, renderWidth, renderHeight, 0);
-    FillFBOQueue(leftTextureQueue, leftFBOQueue);
     rightTextureQueue = WVR_ObtainTextureQueue(WVR_TextureTarget_2D, WVR_TextureFormat_RGBA, WVR_TextureType_UnsignedByte, renderWidth, renderHeight, 0);
-    FillFBOQueue(rightTextureQueue, rightFBOQueue);
+    if (!FillFBOQueue(leftTextureQueue, leftFBOQueue) ||
+        !FillFBOQueue(rightTextureQueue, rightFBOQueue)) {
+      VRB_ERROR("Wave texture queue initialization failed");
+      ReleaseTextureQueues();
+    }
   }
 
   void ReleaseTextureQueues() {
+    if (currentFBO) {
+      currentFBO->Unbind();
+      currentFBO = nullptr;
+    }
+    leftFBOIndex = rightFBOIndex = -1;
+    lastSubmitDiscarded = false;
+    // Delete framebuffer wrappers before releasing the SDK-owned textures.
+    leftFBOQueue.clear();
+    rightFBOQueue.clear();
     if (leftTextureQueue) {
       WVR_ReleaseTextureQueue(leftTextureQueue);
       leftTextureQueue = nullptr;
     }
-    leftFBOQueue.clear();
     if (rightTextureQueue) {
       WVR_ReleaseTextureQueue(rightTextureQueue);
       rightTextureQueue = nullptr;
     }
-    rightFBOQueue.clear();
   }
 
   void Shutdown() {
+    passthrough.Shutdown();
     ReleaseTextureQueues();
   }
 
@@ -597,6 +633,28 @@ DeviceDelegateWaveVR::Create(vrb::RenderContextPtr& aContext) {
 
 void DeviceDelegateWaveVR::InitializeRender() {
   m.InitializeRender();
+  m.passthrough.Initialize();
+}
+
+void DeviceDelegateWaveVR::SetPaused(bool aPaused) {
+  const bool resumed = m.paused && !aPaused;
+  m.paused = aPaused;
+  UpdatePassthrough(resumed);
+}
+
+void DeviceDelegateWaveVR::UpdatePassthrough(bool aForce) {
+  const bool enabled = mIsPassthroughEnabled && !m.paused && !m.suspended && !m.systemPassthrough &&
+                       m.renderMode == device::RenderMode::StandAlone;
+  m.passthrough.Request(enabled, aForce && enabled);
+}
+
+bool DeviceDelegateWaveVR::IsPassthroughEnabled() const {
+  return m.passthroughThisFrame;
+}
+
+void DeviceDelegateWaveVR::TogglePassthroughEnabled() {
+  mIsPassthroughEnabled = !mIsPassthroughEnabled;
+  SetPaused(m.paused);
 }
 
 device::DeviceType
@@ -615,6 +673,7 @@ DeviceDelegateWaveVR::SetRenderMode(const device::RenderMode aMode) {
   }
 
   m.renderMode = aMode;
+  SetPaused(m.paused);
   m.reorientMatrix = vrb::Matrix::Identity();
 
   uint32_t recommendedWidth, recommendedHeight;
@@ -669,6 +728,11 @@ DeviceDelegateWaveVR::SetImmersiveSize(const uint32_t aEyeWidth, const uint32_t 
     m.renderWidth = targetWidth;
     m.renderHeight = targetHeight;
     m.InitializeTextureQueues();
+    // This can happen after StartFrame when Gecko changes its XR layer size.
+    // Acquire new queue slots without resampling the pose for this frame.
+    m.leftFBOIndex = m.leftTextureQueue ? WVR_GetAvailableTextureIndex(m.leftTextureQueue) : -1;
+    m.rightFBOIndex = m.rightTextureQueue ? WVR_GetAvailableTextureIndex(m.rightTextureQueue) : -1;
+    mShouldRender = m.HasValidFrameBuffers();
   }
 }
 
@@ -755,6 +819,11 @@ DeviceDelegateWaveVR::GetControllerModelCount() const {
 
 void
 DeviceDelegateWaveVR::ProcessEvents() {
+  if (m.passthrough.TakeFailure()) {
+    mIsPassthroughEnabled = false;
+    SetPaused(m.paused);
+    VRBrowser::OnPassthroughError();
+  }
   WVR_Event_t event;
   m.gestures->Reset();
   while (WVR_PollEventQueue(&event)) {
@@ -795,15 +864,31 @@ DeviceDelegateWaveVR::ProcessEvents() {
       }
         break;
       case WVR_EventType_DeviceSuspend: {
+        m.suspended = true;
+        UpdatePassthrough();
         VRB_WAVE_EVENT_LOG("WVR_EventType_DeviceSuspend");
         m.reorientMatrix = vrb::Matrix::Identity();
         m.ignoreNextRecenter = true;
       }
         break;
       case WVR_EventType_DeviceResume: {
+        m.suspended = false;
+        // The runtime can reset the underlay while sleeping even if the last
+        // request completed successfully; explicitly reapply it on resume.
+        UpdatePassthrough(true);
         VRB_WAVE_EVENT_LOG("WVR_EventType_DeviceResume");
         m.reorientMatrix = vrb::Matrix::Identity();
         m.UpdateBoundary();
+      }
+        break;
+      case WVR_EventType_PassthroughOverlayShownBySystem: {
+        m.systemPassthrough = true;
+        SetPaused(m.paused);
+      }
+        break;
+      case WVR_EventType_PassthroughOverlayHiddenBySystem: {
+        m.systemPassthrough = false;
+        UpdatePassthrough(true);
       }
         break;
       case WVR_EventType_DeviceRoleChanged: {
@@ -930,10 +1015,24 @@ HandToString(ElbowModel::HandEnum hand) {
 void
 DeviceDelegateWaveVR::StartFrame(const FramePrediction aPrediction) {
   mShouldRender = false;
-  VRB_GL_CHECK(glClearColor(m.clearColor.Red(), m.clearColor.Green(), m.clearColor.Blue(), m.clearColor.Alpha()));
+  // Snapshot once so both eyes use the same background even if IPC completes
+  // while rendering. Opaque immersive VR never exposes the underlay.
+  m.passthroughThisFrame = mIsPassthroughEnabled && !m.paused && !m.suspended && !m.systemPassthrough &&
+      m.renderMode == device::RenderMode::StandAlone && m.passthrough.IsActive();
+  if (m.passthroughThisFrame) {
+    VRB_GL_CHECK(glClearColor(0.0f, 0.0f, 0.0f, 0.0f));
+  } else {
+    VRB_GL_CHECK(glClearColor(m.clearColor.Red(), m.clearColor.Green(), m.clearColor.Blue(),
+                            m.renderMode == device::RenderMode::Immersive ? 1.0f : m.clearColor.Alpha()));
+  }
   if (!m.lastSubmitDiscarded) {
-    m.leftFBOIndex = WVR_GetAvailableTextureIndex(m.leftTextureQueue);
-    m.rightFBOIndex = WVR_GetAvailableTextureIndex(m.rightTextureQueue);
+    m.leftFBOIndex = m.leftTextureQueue ? WVR_GetAvailableTextureIndex(m.leftTextureQueue) : -1;
+    m.rightFBOIndex = m.rightTextureQueue ? WVR_GetAvailableTextureIndex(m.rightTextureQueue) : -1;
+  }
+  if (!m.HasValidFrameBuffers()) {
+    // The SDK may return -1 during transitions. Never index a vector with it.
+    m.lastSubmitDiscarded = false;
+    return;
   }
   // Update cameras
   WVR_GetSyncPose(WVR_PoseOriginModel_OriginOnHead, m.devicePairs, WVR_DEVICE_COUNT_LEVEL_1);
@@ -1031,6 +1130,10 @@ void
 DeviceDelegateWaveVR::BindEye(const device::Eye aWhich) {
   if (m.currentFBO) {
     m.currentFBO->Unbind();
+    m.currentFBO = nullptr;
+  }
+  if (!mShouldRender || !m.HasValidFrameBuffers()) {
+    return;
   }
   if (aWhich == device::Eye::Left) {
     m.currentFBO = m.leftFBOQueue[m.leftFBOIndex];
@@ -1041,6 +1144,8 @@ DeviceDelegateWaveVR::BindEye(const device::Eye aWhich) {
   }
   if (m.currentFBO) {
     m.currentFBO->Bind();
+    // Re-establish coverage blending for each eye, including after WebXR.
+    VRB_GL_CHECK(SetWaveSceneAlphaBlend());
     VRB_GL_CHECK(glViewport(0, 0, m.renderWidth, m.renderHeight));
     VRB_GL_CHECK(glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
   } else {
@@ -1055,6 +1160,10 @@ DeviceDelegateWaveVR::EndFrame(const FrameEndMode aMode) {
     m.currentFBO = nullptr;
   }
 
+  if (!m.HasValidFrameBuffers()) {
+    m.lastSubmitDiscarded = false;
+    return;
+  }
   m.lastSubmitDiscarded = aMode == DeviceDelegate::FrameEndMode::DISCARD;
   if (m.lastSubmitDiscarded) {
     return;

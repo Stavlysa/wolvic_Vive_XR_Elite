@@ -15,6 +15,7 @@ class DeviceDelegateWaveVR : public DeviceDelegate {
 public:
   static DeviceDelegateWaveVRPtr Create(vrb::RenderContextPtr& aContext);
   void InitializeRender();
+  void SetPaused(bool aPaused);
   // DeviceDelegate interface
   device::DeviceType GetDeviceType() override;
   void SetRenderMode(const device::RenderMode aMode) override;
@@ -36,6 +37,8 @@ public:
   void StartFrame(const FramePrediction aPrediction) override;
   void BindEye(const device::Eye aWhich) override;
   void EndFrame(const FrameEndMode aMode) override;
+  bool IsPassthroughEnabled() const override;
+  void TogglePassthroughEnabled() override;
   vrb::LoadTask GetControllerModelTask(int32_t index) override;
   // DeviceDelegateWaveVR interface
   bool IsRunning();
@@ -44,6 +47,7 @@ protected:
   DeviceDelegateWaveVR(State& aState);
   virtual ~DeviceDelegateWaveVR();
 private:
+  void UpdatePassthrough(bool aForce = false);
   State& m;
   VRB_NO_DEFAULTS(DeviceDelegateWaveVR)
 };

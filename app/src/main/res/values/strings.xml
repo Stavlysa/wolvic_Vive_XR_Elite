@@ -590,6 +590,8 @@
     <!-- This string labels an On/Off switch in the 'Display Options' dialog
          and is used to customize if we use passthrough mode when the app starts. -->
     <string name="display_options_start_with_passthrough">Start with Passthrough Mode</string>
+    <string name="display_options_passthrough_background">Passthrough background</string>
+    <string name="passthrough_unavailable">The headset could not enable passthrough. The virtual background has been restored. Close any system passthrough view and try again.</string>
 
     <!-- This string labels a set of radio buttons in the 'Display Options' dialog
          and is used to customize the location of the Tabs pane. -->

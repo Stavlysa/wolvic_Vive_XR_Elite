@@ -5,6 +5,7 @@
 
 #include "ExternalBlitter.h"
 #include "EngineSurfaceTexture.h"
+#include "StereoUV.h"
 #include "vrb/ConcreteClass.h"
 #include "vrb/private/ResourceGLState.h"
 #include "vrb/gl.h"
@@ -60,6 +61,15 @@ varying highp vec2 v_uv;
 
 void main() {
   gl_FragColor = texture2D(u_texture0, v_uv);
+// Wave currently exposes opaque immersive VR only. Keep its frame opaque
+// while a background-passthrough disable request completes asynchronously.
+)SHADER"
+#if defined(WAVEVR)
+R"SHADER(
+  gl_FragColor.a = 1.0;
+)SHADER"
+#endif
+R"SHADER(
 }
 )SHADER";
 #endif
@@ -82,7 +92,6 @@ struct ExternalBlitter::State : public vrb::ResourceGL::State {
   GLint aPosition;
   GLint aUV;
   GLint uTexture0;
-  device::EyeRect eyes[device::EyeCount];
   EngineSurfaceTexturePtr surface;
   GLfloat leftUV[8];
   GLfloat rightUV[8];
@@ -104,7 +113,7 @@ ExternalBlitter::Create(vrb::CreationContextPtr& aContext) {
   return std::make_shared<vrb::ConcreteClass<ExternalBlitter, ExternalBlitter::State> >(aContext);
 }
 
-void
+bool
 ExternalBlitter::StartFrame(const int32_t aSurfaceHandle, const device::EyeRect& aLeftEye,
                             const device::EyeRect& aRightEye) {
   std::map<const int32_t, EngineSurfaceTexturePtr>::iterator iter = m.surfaceMap.find(aSurfaceHandle);
@@ -113,14 +122,16 @@ ExternalBlitter::StartFrame(const int32_t aSurfaceHandle, const device::EyeRect&
   if (createdSurface) {
     VRB_LOG("Creating EngineSurfaceTexture for handle: %d", aSurfaceHandle);
     m.surface = EngineSurfaceTexture::Create(aSurfaceHandle);
-    m.surfaceMap[aSurfaceHandle] = m.surface;
+    if (m.surface) {
+      m.surfaceMap[aSurfaceHandle] = m.surface;
+    }
   } else {
     m.surface = iter->second;
   }
 
   if (!m.surface) {
     VRB_ERROR("Failed to find EngineSurfaceTexture for handle: %d", aSurfaceHandle);
-    return;
+    return false;
   }
 
   if (createdSurface) {
@@ -135,8 +146,13 @@ ExternalBlitter::StartFrame(const int32_t aSurfaceHandle, const device::EyeRect&
   }
 
   m.surface->UpdateTexImage();
-  m.eyes[device::EyeIndex(device::Eye::Left)] = aLeftEye;
-  m.eyes[device::EyeIndex(device::Eye::Right)] = aRightEye;
+  if (!BuildStereoEyeUV(aLeftEye.mX, aLeftEye.mY, aLeftEye.mWidth, aLeftEye.mHeight, m.leftUV) ||
+      !BuildStereoEyeUV(aRightEye.mX, aRightEye.mY, aRightEye.mWidth, aRightEye.mHeight, m.rightUV)) {
+    VRB_ERROR("Invalid WebXR eye rectangles; releasing frame without sampling it");
+    EndFrame();
+    return false;
+  }
+  return true;
 }
 
 void
@@ -201,7 +217,9 @@ ExternalBlitter::CancelFrame(const int32_t aSurfaceHandle) {
     surface = iter->second;
   } else {
     surface = EngineSurfaceTexture::Create(aSurfaceHandle);
-    m.surfaceMap[aSurfaceHandle] = surface;
+    if (surface) {
+      m.surfaceMap[aSurfaceHandle] = surface;
+    }
   }
 
   if (surface) {
@@ -243,7 +261,7 @@ ExternalBlitter::ShutdownGL() {
     VRB_GL_CHECK(glDeleteShader(m.vertexShader));
     m.vertexShader = 0;
   }
-  if (m.vertexShader) {
+  if (m.fragmentShader) {
     VRB_GL_CHECK(glDeleteShader(m.fragmentShader));
     m.fragmentShader = 0;
   }

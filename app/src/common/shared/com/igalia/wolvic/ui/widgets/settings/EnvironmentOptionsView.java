@@ -10,6 +10,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
 import android.view.LayoutInflater;
+import android.view.View;
 
 import androidx.annotation.NonNull;
 import androidx.databinding.DataBindingUtil;
@@ -65,6 +66,12 @@ class EnvironmentOptionsView extends SettingsView implements EnvironmentsManager
         // Footer
         mBinding.footerLayout.setFooterButtonClickListener(mResetListener);
 
+        refreshPassthroughControls();
+        mBinding.passthroughSwitch.setOnCheckedChangeListener((button, enabled, apply) ->
+                setPassthrough(enabled));
+        mBinding.startWithPassthroughSwitch.setOnCheckedChangeListener((button, enabled, apply) ->
+                setStartWithPassthrough(enabled));
+
         mEnvironmentsRadio = findViewById(R.id.environmentRadio);
         mEnvironmentsRadio.setOnCheckedChangeListener(mEnvsListener);
         updateEnvironments();
@@ -81,6 +88,8 @@ class EnvironmentOptionsView extends SettingsView implements EnvironmentsManager
     public void onShown() {
         super.onShown();
 
+        // The three-dot menu can change passthrough while this view is hidden.
+        refreshPassthroughControls();
         mEnvironmentsManager.addListener(this);
         mWidgetManager.pushWorldBrightness(this, WidgetManagerDelegate.DEFAULT_NO_DIM_BRIGHTNESS);
     }
@@ -100,8 +109,33 @@ class EnvironmentOptionsView extends SettingsView implements EnvironmentsManager
         mWidgetManager.updateEnvironment();
     }
 
+    private void refreshPassthroughControls() {
+        boolean supported = mWidgetManager.isPassthroughSupported();
+        mBinding.passthroughSwitch.setVisibility(supported ? View.VISIBLE : View.GONE);
+        mBinding.startWithPassthroughSwitch.setVisibility(supported ? View.VISIBLE : View.GONE);
+        mBinding.passthroughSwitch.setValue(mWidgetManager.isPassthroughEnabled(), false);
+        mBinding.startWithPassthroughSwitch.setValue(
+                SettingsStore.getInstance(getContext()).isStartWithPassthroughEnabled(), false);
+    }
+
+    private void setPassthrough(boolean enabled) {
+        if (mWidgetManager.isPassthroughSupported() && enabled != mWidgetManager.isPassthroughEnabled()) {
+            mWidgetManager.togglePassthrough();
+        }
+        mBinding.passthroughSwitch.setValue(mWidgetManager.isPassthroughEnabled(), false);
+    }
+
+    private void setStartWithPassthrough(boolean enabled) {
+        SettingsStore.getInstance(getContext()).setStartWithPassthroughEnabled(enabled);
+        mBinding.startWithPassthroughSwitch.setValue(enabled, false);
+    }
+
     private OnClickListener mResetListener = (view) -> {
         boolean updated = false;
+        if (mWidgetManager.isPassthroughSupported()) {
+            setPassthrough(false);
+            setStartWithPassthrough(SettingsStore.shouldStartWithPassthrougEnabled());
+        }
         if (mBinding.envOverrideSwitch.isChecked() != SettingsStore.ENV_OVERRIDE_DEFAULT) {
             setEnvOverride(SettingsStore.ENV_OVERRIDE_DEFAULT);
             updated = true;
@@ -124,6 +158,11 @@ class EnvironmentOptionsView extends SettingsView implements EnvironmentsManager
     private ImageRadioGroupSetting.OnCheckedChangeListener mEnvsListener = this::setEnv;
 
     private void setEnv(int checkedId, boolean doApply) {
+        // A user-selected virtual environment replaces the real-world backdrop.
+        // Opening/refreshing this panel must not change the active backdrop.
+        if (doApply) {
+            setPassthrough(false);
+        }
         mEnvironmentsRadio.setOnCheckedChangeListener(null);
         mEnvironmentsRadio.setChecked(checkedId, doApply);
         mEnvironmentsRadio.setOnCheckedChangeListener(mEnvsListener);

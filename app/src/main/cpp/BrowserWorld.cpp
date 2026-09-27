@@ -1924,7 +1924,7 @@ BrowserWorld::DrawWorld(device::Eye aEye) {
     VRB_GL_CHECK(glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
 
   }
-  if (m.rootEnvironment) {
+  if (m.rootEnvironment && !m.device->IsPassthroughEnabled()) {
     m.drawList->Reset();
     m.rootEnvironment->Cull(*m.cullVisitor, *m.drawList);
     m.drawList->Draw(*camera);
@@ -2011,11 +2011,11 @@ BrowserWorld::TickImmersive() {
   int32_t surfaceHandle, textureWidth, textureHeight = 0;
   uint64_t renderedInputFrameId = 0;
   device::EyeRect leftEye, rightEye;
-#if defined(VIVEXR)
+#if defined(VIVEXR) || defined(WAVEVR)
   const uint64_t previousFrameId = m.externalVR->GetFrameId();
 #endif
   const bool frameWaitSucceeded = m.externalVR->WaitFrameResult();
-#if defined(VIVEXR)
+#if defined(VIVEXR) || defined(WAVEVR)
   const bool hasFreshGeckoFrame =
       frameWaitSucceeded && m.externalVR->GetFrameId() != previousFrameId;
 #endif
@@ -2044,12 +2044,18 @@ BrowserWorld::TickImmersive() {
   // DeviceDelegate::StartFrame() might have failed and then we should discard the frame.
   aDiscardFrame = aDiscardFrame || !m.device->ShouldRender();
 
+  bool textureConsumed = false;
   if (state == ExternalVR::VRState::Rendering) {
     if (!aDiscardFrame) {
       if (textureWidth > 0 && textureHeight > 0) {
         m.device->SetImmersiveSize((uint32_t) textureWidth/2, (uint32_t) textureHeight);
       }
-      m.blitter->StartFrame(surfaceHandle, leftEye, rightEye);
+      if (m.device->ShouldRender()) {
+        aDiscardFrame = !m.blitter->StartFrame(surfaceHandle, leftEye, rightEye);
+        textureConsumed = true;
+      } else {
+        aDiscardFrame = true;
+      }
       if (m.webXRInterstialState != WebXRInterstialState::HIDDEN) {
         TickWebXRInterstitial();
       } else {
@@ -2065,8 +2071,8 @@ BrowserWorld::TickImmersive() {
     }
     m.frameEndHandler = [=]() {
       m.device->EndFrame(aDiscardFrame ? DeviceDelegate::FrameEndMode::DISCARD : DeviceDelegate::FrameEndMode::APPLY);
-#if defined(VIVEXR)
-      if (hasFreshGeckoFrame && aDiscardFrame && surfaceHandle != 0) {
+#if defined(VIVEXR) || defined(WAVEVR)
+      if (hasFreshGeckoFrame && aDiscardFrame && !textureConsumed && surfaceHandle != 0) {
         // A Gecko single-buffer SurfaceTexture must still be consumed and
         // released when OpenXR cannot render this iteration.
         m.blitter->CancelFrame(surfaceHandle);
@@ -2074,8 +2080,8 @@ BrowserWorld::TickImmersive() {
         m.blitter->EndFrame();
       }
       if (hasFreshGeckoFrame) {
-        // ACK only after xrEndFrame and ReleaseTexImage/CancelFrame return.
-        m.externalVR->CompleteFrameResult(surfaceHandle != 0);
+        // Ownership ends only after native submission and texture release.
+        m.externalVR->CompleteFrameResult(!aDiscardFrame && surfaceHandle != 0);
       }
 #else
       m.blitter->EndFrame();
@@ -2086,7 +2092,7 @@ BrowserWorld::TickImmersive() {
       m.blitter->CancelFrame(surfaceHandle);
     }
     TickWebXRInterstitial();
-#if defined(VIVEXR)
+#if defined(VIVEXR) || defined(WAVEVR)
     if (hasFreshGeckoFrame) {
       m.frameEndHandler = [=]() {
         m.device->EndFrame();

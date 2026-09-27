@@ -3,11 +3,11 @@
 This fork contains two VIVE XR Elite platform backends:
 
 - `wavevr` is the currently tested backend. It uses HTC Wave SDK 5.6 and is the
-  backend used by the Stage 51 through Stage 62 APKs.
+  backend used by the Stage 51 through Stage 65 APKs.
 - `vivexr` is the earlier experimental backend based on the standard Android
   OpenXR loader. It remains in the tree for comparison and future work.
 
-## Current Stage 62 status
+## Current Stage 65 status
 
 The Wave build has been tested directly on a standalone VIVE XR Elite. It
 includes:
@@ -22,6 +22,16 @@ includes:
 - left-controller Menu button exit from immersive WebXR
 - runtime-provided left and right controller models
 - Wave component `localMat` transforms for controller-model alignment
+- optional real-world browser background with controls in Environment
+
+The current APK is Wolvic 2.0, versionCode 202582032. The latest changes add
+passthrough lifecycle handling, correct UI alpha coverage, per-eye texture
+regions, guarded Wave texture indices and shader cleanup. Frame completion is
+published with the next fresh pose after surface release.
+
+See [current release notes](docs/RELEASE_STAGE65.md),
+[frame safeguards](docs/VIVE_STAGE63.md), [UI compositing](docs/VIVE_STAGE64.md)
+and [Environment settings](docs/VIVE_STAGE65.md).
 
 Stage 52 additionally uses an optimized release build, keeps Wave debug logging
 opt-in, and avoids installing the debug session-store observer unless verbose
@@ -103,7 +113,7 @@ does not reproduce the headset's compositor output reliably in immersive mode,
 so visual quality must still be checked inside the headset.
 
 Known issue: some distant WebXR background geometry can still flicker while
-nearby menus remain stable. That rendering issue is not resolved in Stage 62.
+nearby menus remain stable. A fix for that visual issue is not established.
 
 ## External HTC dependency
 
@@ -140,7 +150,7 @@ From the repository root on Windows PowerShell:
 .\gradlew.bat assembleWavevrArm64GeckoGenericDebug --no-daemon
 ```
 
-To reproduce the locally signed Stage 62 performance build on PowerShell:
+To build the locally signed Wave release on PowerShell:
 
 ```powershell
 .\gradlew.bat assembleWavevrArm64GeckoGenericRelease '-PuserProperties.useDebugSigningOnRelease=true' --no-daemon
@@ -197,7 +207,7 @@ The alternative `vivexr` backend does not require Wave SDK:
 
 It uses the standard Khronos Android OpenXR loader and the Focus 3 / XR Elite
 controller interaction profile. It is not the backend used to produce the
-Stage 62 APK and has not received all of the Wave-specific fixes listed above.
+current APK and has not received all of the Wave-specific fixes listed above.
 
 ## GitHub release packaging
 
@@ -205,12 +215,12 @@ Keep the source archive and APK as separate GitHub assets:
 
 - upload the source tree to the repository without local SDKs, build outputs,
   signing files or `local.properties`;
-- attach the Stage 62 APK and the explicitly named complete-source ZIP to a
+- attach the current APK and the explicitly named complete-source ZIP to a
   GitHub Release;
 - state clearly that this is an unofficial device adaptation and that the HTC
   Wave SDK must be downloaded separately.
 
-Until the complete VIVE source is committed to the public Git branch, GitHub's
-automatically generated `Source code` archives contain only the selected tag's
-repository snapshot. They must not be presented as the Stage 62 source; use
-the separately uploaded `complete-source` archive and publish its SHA-256.
+The VIVE changes are committed to the public branch and Release tag. GitHub's
+automatic source archives omit submodule contents. The separate complete-source
+ZIP includes the pinned open-source submodules. The external HTC SDK remains
+excluded; SHA256SUMS.txt identifies the uploaded APK and complete source ZIP.

@@ -464,6 +464,8 @@
     <!-- This string labels an On/Off switch in the 'Display Options' dialog
          and is used to customize if we use passthrough mode when the app starts. -->
     <string name="display_options_start_with_passthrough">啟動時使用直通模式</string>
+    <string name="display_options_passthrough_background">透視實景背景</string>
+    <string name="passthrough_unavailable">頭顯無法開啟透視，已恢復虛擬背景。請關閉系統的透視畫面後再試一次。</string>
 
     <!-- This string labels an On/Off switch in the 'Display Options' dialog
          and is used to customize if we use sound effects when interacting with app. -->

@@ -34,6 +34,12 @@ static DeviceDelegateWaveVRPtr sDevice;
 
 extern "C" {
 
+// Dispatched through the Wave render queue by PlatformActivity's lifecycle.
+JNI_METHOD(void, setPassthroughPausedNative)
+(JNIEnv*, jobject, jboolean aPaused) {
+  if (sDevice) sDevice->SetPaused(aPaused);
+}
+
 JNI_METHOD(void, activityPaused)
 (JNIEnv*, jobject) {
   BrowserWorld::Instance().Pause();

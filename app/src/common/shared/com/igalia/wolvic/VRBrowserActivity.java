@@ -2254,7 +2254,26 @@ public class VRBrowserActivity extends PlatformActivity implements WidgetManager
     }
     @Override
     public boolean isPassthroughSupported() {
-        return DeviceType.isOculusBuild() || DeviceType.isLynx() || DeviceType.isSnapdragonSpaces() || DeviceType.isPicoXR();
+        return DeviceType.isOculusBuild() || DeviceType.isLynx() || DeviceType.isSnapdragonSpaces() || DeviceType.isPicoXR() || DeviceType.isWaveVR();
+    }
+
+    // Called on the render thread when the Wave runtime rejects passthrough.
+    @androidx.annotation.Keep
+    public void onPassthroughError() {
+        runOnUiThread(() -> {
+            mIsPassthroughEnabled = false;
+            PromptDialogWidget dialog = new PromptDialogWidget(this);
+            dialog.setTitle(R.string.display_options_passthrough_background);
+            dialog.setBody(getString(R.string.passthrough_unavailable));
+            dialog.setDescriptionVisible(false);
+            dialog.setCheckboxVisible(false);
+            dialog.setButtons(new int[] {android.R.string.ok});
+            dialog.setButtonsDelegate((index, checked) -> {
+                dialog.hide(UIWidget.REMOVE_WIDGET);
+                dialog.releaseWidget();
+            });
+            dialog.show(UIWidget.REQUEST_FOCUS);
+        });
     }
     @Override
     public boolean areControllersAvailable() {

@@ -37,6 +37,18 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
+                <com.igalia.wolvic.ui.views.settings.SwitchSetting
+                    android:id="@+id/passthroughSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:description="@string/display_options_passthrough_background" />
+
+                <com.igalia.wolvic.ui.views.settings.SwitchSetting
+                    android:id="@+id/startWithPassthroughSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:description="@string/display_options_start_with_passthrough" />
+
                 <com.igalia.wolvic.ui.views.settings.ImageRadioGroupSetting
                     android:id="@+id/environmentRadio"
                     android:layout_width="match_parent"
